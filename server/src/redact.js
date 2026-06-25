@@ -9,8 +9,8 @@ export const REDACT_HEADER_KEYS = [
   "anthropic-organization-id",
 ];
 
-const SK_ANT = /sk-ant-[A-Za-z0-9_\-]{6,}/g;
-const BEARER = /Bearer\s+[A-Za-z0-9_\-\.=]{6,}/g;
+const SK_ANT_SRC = "\\bsk-ant-[A-Za-z0-9_\\-]{6,}";
+const BEARER_SRC = "Bearer\\s+(?=[A-Za-z0-9_.\\-=]*[0-9_.\\-=])[A-Za-z0-9_.\\-=]{6,}";
 
 export function redactHeaders(headers, knownSecrets = []) {
   const out = {};
@@ -34,7 +34,9 @@ export function redactBody(body, knownSecrets = []) {
       s = s.split(secret).join("[REDACTED]");
     }
   }
-  s = s.replace(SK_ANT, "[REDACTED]");
-  s = s.replace(BEARER, "Bearer [REDACTED]");
+  const skAntRe = new RegExp(SK_ANT_SRC, "g");
+  const bearerRe = new RegExp(BEARER_SRC, "g");
+  s = s.replace(skAntRe, "[REDACTED]");
+  s = s.replace(bearerRe, "Bearer [REDACTED]");
   return s;
 }

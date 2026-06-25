@@ -36,4 +36,20 @@ describe("redact", () => {
     const out = redactBody("Authorization: Bearer eyJhb-long-jwt", []);
     expect(out).not.toContain("eyJhb-long-jwt");
   });
+
+  it("does not redact short sk-ant- suffix (below 6 chars)", () => {
+    expect(redactBody('{"a":"sk-ant-abc"}', [])).toContain("sk-ant-abc");
+  });
+
+  it("does not redact short Bearer token (below 6 chars)", () => {
+    expect(redactBody("Bearer abc", [])).toContain("Bearer abc");
+  });
+
+  it("skips known secrets shorter than 4 chars", () => {
+    expect(redactBody("ab here", ["ab"])).toContain("ab");
+  });
+
+  it("does not redact benign Bearer prose (no non-alpha chars in token part)", () => {
+    expect(redactBody("The Bearer authorization scheme", [])).toContain("Bearer authorization");
+  });
 });
