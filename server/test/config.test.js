@@ -48,4 +48,37 @@ describe("loadConfig", () => {
     process.env.API_TIMEOUT_MS = "1200000";
     expect(loadConfig().apiTimeoutMs).toBe(1200000);
   });
+
+  it("returns httpsProxy when HTTPS_PROXY is set", () => {
+    process.env.ACCESS_KEY = "k";
+    process.env.HTTPS_PROXY = "https://proxy:8443";
+    const cfg = loadConfig();
+    expect(cfg.httpsProxy).toBe("https://proxy:8443");
+  });
+
+  it("defaults noProxy to localhost,127.0.0.1 when NO_PROXY is unset", () => {
+    process.env.ACCESS_KEY = "k";
+    // NO_PROXY is deleted in beforeEach, so it is unset
+    const cfg = loadConfig();
+    expect(cfg.noProxy).toBe("localhost,127.0.0.1");
+  });
+
+  it("throws on invalid API_TIMEOUT_MS values", () => {
+    process.env.ACCESS_KEY = "k";
+    process.env.API_TIMEOUT_MS = "-1";
+    expect(() => loadConfig()).toThrow(/API_TIMEOUT_MS/);
+    process.env.API_TIMEOUT_MS = "0";
+    expect(() => loadConfig()).toThrow(/API_TIMEOUT_MS/);
+    process.env.API_TIMEOUT_MS = "not-a-number";
+    expect(() => loadConfig()).toThrow(/API_TIMEOUT_MS/);
+  });
+
+  it("returns anthropicApiKey and anthropicBaseUrl when set", () => {
+    process.env.ACCESS_KEY = "k";
+    process.env.ANTHROPIC_API_KEY = "sk-test-key";
+    process.env.ANTHROPIC_BASE_URL = "https://custom.api.com";
+    const cfg = loadConfig();
+    expect(cfg.anthropicApiKey).toBe("sk-test-key");
+    expect(cfg.anthropicBaseUrl).toBe("https://custom.api.com");
+  });
 });
