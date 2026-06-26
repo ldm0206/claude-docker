@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import tls from "node:tls";
 import { Proxy } from "http-mitm-proxy";
 import selfsigned from "selfsigned";
 
@@ -98,7 +99,7 @@ function createUpstreamAgent(upstreamUrl, isSSL) {
         }
         // Now TLS-handshake over the tunnelled socket
         const tlsOpts = { ...options, socket, servername: options.servername || options.host };
-        const tlsSocket = require("node:tls").connect(tlsOpts, () => {
+        const tlsSocket = tls.connect(tlsOpts, () => {
           callback(null, tlsSocket);
         });
         tlsSocket.on("error", (e) => callback(e));
