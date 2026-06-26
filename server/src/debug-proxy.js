@@ -57,13 +57,27 @@ function seedSslCaDir(sslCaDir, ca) {
     mkdirSync(keysDir, { recursive: true });
     writeFileSync(join(certsDir, "ca.pem"), ca.cert);
     writeFileSync(join(keysDir, "ca.private.key"), ca.key);
-    // Derive a proper public-key PEM so forge.publicKeyFromPem succeeds during
-    // http-mitm-proxy's loadCA. The signing CA is still our trusted CA.
+
+    // Derive the public key FROM THE CERT, never from the private key. forge's
+    // privateKeyFromPem does NOT populate .publicKey, so publicKeyToPem on it
+    // throws and a buggy catch would write the PRIVATE-key PEM here — which
+    // then makes http-mitm-proxy's loadCA throw at publicKeyFromPem() and the
+    // proxy never listens. Deriving from the cert always yields a valid
+    // "-----BEGIN PUBLIC KEY-----" PEM. If a valid public key already exists
+    // (e.g. the entrypoint wrote one via `openssl rsa -pubout`), keep it.
+    const pubKeyPath = join(keysDir, "ca.public.key");
+    let needPub = true;
     try {
-      const priv = forgePki.privateKeyFromPem(ca.key);
-      writeFileSync(join(keysDir, "ca.public.key"), forgePki.publicKeyToPem(priv.publicKey));
+      if (existsSync(pubKeyPath)) {
+        forgePki.publicKeyFromPem(readFileSync(pubKeyPath, "utf8")); // throws if invalid
+        needPub = false;
+      }
     } catch {
-      writeFileSync(join(keysDir, "ca.public.key"), ca.key);
+      needPub = true; // existing file is bad/empty/missing — re-derive
+    }
+    if (needPub) {
+      const certObj = forgePki.certificateFromPem(ca.cert);
+      writeFileSync(pubKeyPath, forgePki.publicKeyToPem(certObj.publicKey));
     }
   } catch {
     // best-effort

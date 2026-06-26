@@ -27,7 +27,7 @@ chown claude:claude "${CA_CRT}" "${CA_KEY}"
 
 # Install CA into the system trust store (root only).
 cp "${CA_CRT}" /usr/local/share/ca-certificates/claude-debug.crt
-update-ca-certificates >/dev/null 2>&1 || true
+update-ca-certificates >/dev/null 2>&1 || echo "[entrypoint] WARN: update-ca-certificates failed" >&2
 
 # Seed http-mitm-proxy's sslCaDir layout so loadCA consumes OUR CA instead of
 # auto-generating a different one. Forge reads ca.pem + ca.private.key +
@@ -35,7 +35,7 @@ update-ca-certificates >/dev/null 2>&1 || true
 mkdir -p "${SSL_CA_DIR}/certs" "${SSL_CA_DIR}/keys"
 cp "${CA_CRT}" "${SSL_CA_DIR}/certs/ca.pem"
 cp "${CA_KEY}" "${SSL_CA_DIR}/keys/ca.private.key"
-openssl rsa -in "${CA_KEY}" -pubout -out "${SSL_CA_DIR}/keys/ca.public.key" >/dev/null 2>&1 || true
+openssl rsa -in "${CA_KEY}" -pubout -out "${SSL_CA_DIR}/keys/ca.public.key" >/dev/null 2>&1 || echo "[entrypoint] WARN: openssl rsa -pubout failed" >&2
 chown -R claude:claude "${SSL_CA_DIR}"
 
 # Hand the paths to the node process so debug-proxy.js loads them.
