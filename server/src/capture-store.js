@@ -21,7 +21,7 @@ export function createCaptureStore({ max = 500, knownSecrets = [] } = {}) {
       const stored = { id: ++counter, ...redact(rec) };
       records.unshift(stored);
       while (records.length > max) records.pop();
-      for (const fn of subs) fn(stored);
+      for (const fn of [...subs]) fn(stored);
       return stored;
     },
     list() {
