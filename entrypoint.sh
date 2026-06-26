@@ -10,4 +10,4 @@ chown -R claude:claude /workspace
 export WEB_DIST="${WEB_DIST:-/app/web/dist}"
 export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-/home/claude/.claude}"
 
-exec gosu claude tini -- node /app/server/src/server.js
+exec gosu claude node /app/server/src/server.js
