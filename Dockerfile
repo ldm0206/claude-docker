@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ripgrep curl ca-certificates jq tini gosu sudo openssl \
+        python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash claude \
@@ -21,10 +22,11 @@ USER root
 WORKDIR /workspace
 
 COPY server /app/server
-RUN cd /app/server && npm install --omit=dev
-
 COPY web /app/web
-RUN cd /app/web && npm install && npm run build
+RUN cd /app/server && npm install --omit=dev \
+    && cd /app/web && npm install && npm run build \
+    && apt-get purge -y --auto-remove python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
