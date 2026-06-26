@@ -1,70 +1,72 @@
-import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
+import { pki as forgePki } from "node-forge";
 import { Proxy } from "http-mitm-proxy";
-import selfsigned from "selfsigned";
 
 // --- Constants ---
-const CA_KEY = "/home/claude/.claude/debug-proxy-ca.key";
-const CA_CERT_PEM = "/home/claude/.claude/debug-proxy-ca.crt";
-const SYSTEM_CERT = "/usr/local/share/ca-certificates/debug-proxy.crt";
-const MITM_CERTS_DIR = "/home/claude/.claude/mitm-certs";
+// CA generation + trust-store install is the ENTRYPOINT's job (it runs as
+// root). At runtime we only LOAD the pre-generated CA from the env-provided
+// paths. Outside the container (tests) no CA is available — caEnv() is {}.
+const ENV_CA_CERT = process.env.CLAUDE_DEBUG_CA_CERT || null; // e.g. /etc/claude-debug/ca.crt
+const ENV_CA_KEY = process.env.CLAUDE_DEBUG_CA_KEY || null;  // e.g. /etc/claude-debug/ca.key
+const ENV_SSL_CA_DIR = process.env.CLAUDE_DEBUG_SSL_CA_DIR || null; // http-mitm-proxy sslCaDir
+const SYSTEM_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 const FIXED_PORT = 8888;
 const LISTEN_HOST = "127.0.0.1";
 
 /**
- * Load an existing CA from disk, or generate a new one with selfsigned.
- * All file I/O is wrapped in try/catch — the paths may not be writable
- * outside the container (e.g. on a Windows test host).
+ * Load the CA keypair that the entrypoint generated (as root). The same CA
+ * is installed into the system trust store by the entrypoint, so the leaf
+ * certs http-mitm-proxy signs with it are trusted by claude.
+ *
+ * We materialize the keypair into the http-mitm-proxy sslCaDir layout
+ * (<dir>/certs/ca.pem, <dir>/keys/ca.private.key, ca.public.key) so that
+ * http-mitm-proxy's CA loader (loadCA) reads OUR CA instead of generating
+ * its own.
+ *
+ * If no env CA is present (tests / non-container), returns null and the proxy
+ * will fall back to http-mitm-proxy's default sslCaDir (auto-generate).
  */
-function loadOrCreateCA() {
+function loadCaKeypair() {
+  if (!ENV_CA_CERT || !ENV_CA_KEY) return null;
+  if (!existsSync(ENV_CA_CERT) || !existsSync(ENV_CA_KEY)) return null;
   try {
-    if (existsSync(CA_CERT_PEM) && existsSync(CA_KEY)) {
-      return {
-        key: readFileSync(CA_KEY, "utf8"),
-        cert: readFileSync(CA_CERT_PEM, "utf8"),
-      };
-    }
+    return {
+      cert: readFileSync(ENV_CA_CERT, "utf8"),
+      key: readFileSync(ENV_CA_KEY, "utf8"),
+    };
   } catch {
-    // fall through to generate
+    return null;
   }
-
-  const pem = selfsigned.generate(
-    [{ name: "commonName", value: "claude-docker-debug-proxy" }],
-    { keySize: 2048, days: 3650 },
-  );
-
-  try {
-    mkdirSync("/home/claude/.claude", { recursive: true });
-    writeFileSync(CA_KEY, pem.private);
-    writeFileSync(CA_CERT_PEM, pem.cert);
-  } catch {
-    // directory may not be writable outside the container — best-effort
-  }
-
-  return { key: pem.private, cert: pem.cert };
 }
 
 /**
- * Install the CA cert into the container's system trust store.
- * Returns the caEnv object for child processes, or {} on failure.
- * Both the file write and update-ca-certificates are wrapped in try/catch
- * because they do not exist on a Windows test host.
+ * Write our CA keypair into http-mitm-proxy's sslCaDir layout so its loadCA
+ * path consumes our (already-trusted) CA rather than generating a fresh one.
+ * Best-effort; safe no-op outside the container.
  */
-function installCaToContainer(certPem) {
+function seedSslCaDir(sslCaDir, ca) {
+  if (!sslCaDir || !ca) return;
   try {
-    writeFileSync(SYSTEM_CERT, certPem);
-    execSync("update-ca-certificates", { stdio: "pipe" });
-    return {
-      NODE_EXTRA_CA_CERTS: CA_CERT_PEM,
-      SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt",
-      REQUESTS_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt",
-    };
+    const certsDir = join(sslCaDir, "certs");
+    const keysDir = join(sslCaDir, "keys");
+    mkdirSync(certsDir, { recursive: true });
+    mkdirSync(keysDir, { recursive: true });
+    writeFileSync(join(certsDir, "ca.pem"), ca.cert);
+    writeFileSync(join(keysDir, "ca.private.key"), ca.key);
+    // Derive a proper public-key PEM so forge.publicKeyFromPem succeeds during
+    // http-mitm-proxy's loadCA. The signing CA is still our trusted CA.
+    try {
+      const priv = forgePki.privateKeyFromPem(ca.key);
+      writeFileSync(join(keysDir, "ca.public.key"), forgePki.publicKeyToPem(priv.publicKey));
+    } catch {
+      writeFileSync(join(keysDir, "ca.public.key"), ca.key);
+    }
   } catch {
-    // not in a Debian/Ubuntu container — CA install is best-effort
-    return {};
+    // best-effort
   }
 }
 
@@ -152,29 +154,34 @@ export function createDebugProxy({ store, upstreamProxy }) {
   return {
     /**
      * Start the MITM proxy. Idempotent and NON-THROWING (best-effort).
-     * - Generates/loads a container-local CA
-     * - Installs CA into system trust store (best-effort)
+     * - Loads the CA generated by the entrypoint (root) from CLAUDE_DEBUG_CA_*
+     *   env vars, seeding http-mitm-proxy's sslCaDir so it signs leaf certs
+     *   with the SAME CA installed into the trust store. No trust-store
+     *   mutation happens at runtime (that needs root).
      * - Starts listening on 127.0.0.1:8888
      */
     async start() {
       if (up) return; // already running
 
-      // Step 1: CA generation/load
-      let ca;
+      // Step 1: Load pre-generated CA (if env present). Seeds sslCaDir so
+      // http-mitm-proxy consumes our trusted CA instead of auto-generating.
+      let ca = null;
       try {
-        ca = loadOrCreateCA();
+        ca = loadCaKeypair();
+        if (ca && ENV_SSL_CA_DIR) seedSslCaDir(ENV_SSL_CA_DIR, ca);
       } catch {
-        // If we can't even generate a CA, we can't MITM
-        up = false;
-        return;
+        ca = null;
       }
 
-      // Step 2: Install CA into container trust store (best-effort)
-      try {
-        cachedCaEnv = installCaToContainer(ca.cert);
-      } catch {
-        cachedCaEnv = {};
-      }
+      // Step 2: caEnv — tells child processes which CA to trust. Empty {} when
+      // no env CA is available (tests / non-container).
+      cachedCaEnv = ca && ENV_CA_CERT
+        ? {
+            NODE_EXTRA_CA_CERTS: ENV_CA_CERT,
+            SSL_CERT_FILE: SYSTEM_BUNDLE,
+            REQUESTS_CA_BUNDLE: SYSTEM_BUNDLE,
+          }
+        : {};
 
       // Step 3: Create and start the proxy
       try {
@@ -221,10 +228,13 @@ export function createDebugProxy({ store, upstreamProxy }) {
           callback();
         });
 
-        // Listen on fixed port — returns this; callback fires when ready
+        // Listen on fixed port — returns this; callback fires when ready.
+        // sslCaDir is seeded (above) with our trusted CA when env CA is set;
+        // otherwise http-mitm-proxy auto-generates its own there.
+        const sslCaDir = ENV_SSL_CA_DIR || "/tmp/claude-debug-mitm-certs";
         await new Promise((resolve) => {
           proxy.listen(
-            { host: LISTEN_HOST, port: FIXED_PORT, sslCaDir: MITM_CERTS_DIR, httpAgent, httpsAgent },
+            { host: LISTEN_HOST, port: FIXED_PORT, sslCaDir, httpAgent, httpsAgent },
             (err) => {
               if (err) {
                 // listen failed — e.g. port in use or permissions

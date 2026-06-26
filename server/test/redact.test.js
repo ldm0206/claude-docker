@@ -52,4 +52,16 @@ describe("redact", () => {
   it("does not redact benign Bearer prose (no non-alpha chars in token part)", () => {
     expect(redactBody("The Bearer authorization scheme", [])).toContain("Bearer authorization");
   });
+
+  it("redacts lowercase 'bearer' tokens", () => {
+    const out = redactBody("authorization: bearer eyJhb-long-jwt-9", []);
+    expect(out).not.toContain("eyJhb-long-jwt-9");
+    expect(out.toLowerCase()).toContain("bearer [redacted]");
+  });
+
+  it("redacts 'Bearer:' with a colon and no space", () => {
+    const out = redactBody("Authorization:Bearer:eyJ-secret-1.2", []);
+    expect(out).not.toContain("eyJ-secret-1.2");
+    expect(out).toContain("[REDACTED]");
+  });
 });

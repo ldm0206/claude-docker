@@ -6,13 +6,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CLAUDE_CONFIG_DIR=/home/claude/.claude
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ripgrep curl ca-certificates jq tini gosu sudo \
+        git ripgrep curl ca-certificates jq tini gosu sudo openssl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 1000 -s /bin/bash claude \
     && install -d -o claude -g claude /workspace
 
+# Install the claude CLI AS the claude user so it lands in
+# /home/claude/.local/bin (matches the runtime HOME and buildClaudeEnv's PATH).
+USER claude
 RUN curl -fsSL https://claude.ai/install.sh | bash
+USER root
 
 WORKDIR /workspace
 

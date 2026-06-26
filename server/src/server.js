@@ -13,6 +13,7 @@ import {
 import { createCaptureStore } from "./capture-store.js";
 import { createPtyManager } from "./pty-manager.js";
 import { createDebugProxy } from "./debug-proxy.js";
+import { loadConfig } from "./config.js";
 
 const read = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
 
@@ -27,7 +28,10 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
 
   const pty = createPtyManager({
     cwd: "/workspace",
-    env: buildClaudeEnv(config),
+    // LAZY env: resolved fresh inside start() on every (re)start, so a
+    // capture toggle + /api/session/restart re-evaluates buildClaudeEnv and
+    // picks up the current debugProxy.isUp() routing.
+    env: () => buildClaudeEnv(config),
     command: "claude",
     args: [],
   });
@@ -87,14 +91,20 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
   await fastify.listen({ port, host: "0.0.0.0" });
   const actualPort = fastify.server.address().port;
 
-  // Start the debug MITM proxy — non-throwing, best-effort
-  try { await debugProxy.start(); } catch { /* must not crash buildServer */ }
+  // MITM proxy is started LAZILY — only by /api/capture/enable. It must NOT
+  // start at boot: that would bind 127.0.0.1:8888 and mutate the trust store
+  // during unit tests and contradict the "off by default" capture posture.
+  // The user flow is: enable capture (starts MITM) → restart session (PTY
+  // re-spawns with env now routing through the MITM).
 
   const wss = new WebSocketServer({ noServer: true });
   fastify.server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url, "http://x");
     const cookieVal = parseCookie(req.headers.cookie || "")["session"];
-    if (!cookieVal || (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)) {
+    // Origin check: compare the Origin's HOST only (allow either scheme) so
+    // TLS-fronted deployments (Caddy/nginx/Cloudflare → https://) are not
+    // rejected. The authoritative auth gate is verifySession below.
+    if (!cookieVal || !originHostMatches(req.headers.origin, req.headers.host)) {
       socket.destroy(); return;
     }
     if (!verifySession(cookieVal, sessionSecret)) {
@@ -183,4 +193,40 @@ function parseCookie(header) {
     if (k) out[k] = decodeURIComponent(rest.join("="));
   }
   return out;
+}
+
+/**
+ * Validate the WS Origin header against req host. Accepts either http/https
+ * scheme (TLS-terminated frontends send https://). Absent Origin is allowed —
+ * same-origin browser WS always sends Origin, but the real auth gate is the
+ * signed session cookie (verifySession), not Origin.
+ */
+function originHostMatches(origin, host) {
+  if (!origin) return true;
+  try {
+    const originHost = new URL(origin).host;
+    return originHost === host;
+  } catch {
+    return false;
+  }
+}
+
+// --- Main entrypoint (container: `node src/server.js`) ---
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  const config = loadConfig();
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    console.error("SESSION_SECRET environment variable is required");
+    process.exit(1);
+  }
+  const port = Number(process.env.PORT) || 8080;
+  buildServer({ config, sessionSecret, port })
+    .then((srv) => {
+      console.log(`[server] listening on :${srv.port}`);
+    })
+    .catch((e) => {
+      console.error("[server] failed to start:", e);
+      process.exit(1);
+    });
 }

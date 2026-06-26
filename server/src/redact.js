@@ -10,7 +10,10 @@ export const REDACT_HEADER_KEYS = [
 ];
 
 const SK_ANT_SRC = "\\bsk-ant-[A-Za-z0-9_\\-]{6,}";
-const BEARER_SRC = "Bearer\\s+(?=[A-Za-z0-9_.\\-=]*[0-9_.\\-=])[A-Za-z0-9_.\\-=]{6,}";
+// Case-insensitive Bearer, tolerate a colon or no space after "Bearer", and
+// require the token portion to contain a digit/punct char (lookahead) so prose
+// like "Bearer authorization scheme" is not over-redacted.
+const BEARER_SRC = "\\bBearer[\\s:]*(?=[A-Za-z0-9_.\\-=]*[0-9_.\\-=])[A-Za-z0-9_.\\-=]{6,}";
 
 export function redactHeaders(headers, knownSecrets = []) {
   const out = {};
@@ -35,7 +38,7 @@ export function redactBody(body, knownSecrets = []) {
     }
   }
   const skAntRe = new RegExp(SK_ANT_SRC, "g");
-  const bearerRe = new RegExp(BEARER_SRC, "g");
+  const bearerRe = new RegExp(BEARER_SRC, "gi");
   s = s.replace(skAntRe, "[REDACTED]");
   s = s.replace(bearerRe, "Bearer [REDACTED]");
   return s;
