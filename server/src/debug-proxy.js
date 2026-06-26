@@ -181,11 +181,11 @@ export function createDebugProxy({ store, upstreamProxy }) {
         proxy = new Proxy();
 
         // Configure upstream proxy chaining if provided and HTTP-based
+        let httpAgent, httpsAgent;
         if (effectiveUpstream) {
           try {
-            proxy.options = proxy.options || {};
-            proxy.options.httpAgent = createUpstreamAgent(effectiveUpstream, false);
-            proxy.options.httpsAgent = createUpstreamAgent(effectiveUpstream, true);
+            httpAgent = createUpstreamAgent(effectiveUpstream, false);
+            httpsAgent = createUpstreamAgent(effectiveUpstream, true);
           } catch {
             // upstream agent creation failed — proxy will try direct
           }
@@ -200,24 +200,21 @@ export function createDebugProxy({ store, upstreamProxy }) {
           const url = ctx.clientToProxyRequest.url;
 
           if (recording) {
-            ctx.onRequestData((d, next) => { chunks.req.push(d); return next(null, d); });
-            ctx.onResponseData((d, next) => { chunks.res.push(d); return next(null, d); });
-            ctx.onResponseEnd((cb) => {
+            ctx.onRequestData((ctx, chunk, callback) => { chunks.req.push(chunk); return callback(null, chunk); });
+            ctx.onResponseData((ctx, chunk, callback) => { chunks.res.push(chunk); return callback(null, chunk); });
+            ctx.onResponseEnd((ctx, callback) => {
               const reqBody = Buffer.concat(chunks.req).toString("utf8");
               const resBody = Buffer.concat(chunks.res).toString("utf8");
               store.add({
-                ts: started,
-                method,
-                host,
-                path: url,
+                ts: started, method, host, path: url,
                 status: ctx.serverToProxyResponse?.statusCode,
                 latencyMs: Date.now() - started,
-                reqHeaders: { ...ctx.clientToProxyRequest.headers },
+                reqHeaders: { ...(ctx.clientToProxyRequest?.headers || {}) },
                 reqBody,
                 resHeaders: { ...(ctx.serverToProxyResponse?.headers || {}) },
                 resBody,
               });
-              cb();
+              callback();
             });
           }
 
@@ -227,7 +224,7 @@ export function createDebugProxy({ store, upstreamProxy }) {
         // Listen on fixed port — returns this; callback fires when ready
         await new Promise((resolve) => {
           proxy.listen(
-            { host: LISTEN_HOST, port: FIXED_PORT, sslCaDir: MITM_CERTS_DIR },
+            { host: LISTEN_HOST, port: FIXED_PORT, sslCaDir: MITM_CERTS_DIR, httpAgent, httpsAgent },
             (err) => {
               if (err) {
                 // listen failed — e.g. port in use or permissions
