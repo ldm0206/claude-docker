@@ -9,12 +9,18 @@ import {
 } from "./metrics.js";
 import { createCaptureStore } from "./capture-store.js";
 import { createPtyManager } from "./pty-manager.js";
+import { createDebugProxy } from "./debug-proxy.js";
 
 const read = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
 
 export async function buildServer({ config, sessionSecret, port = 8080 }) {
   const captureStore = createCaptureStore({ knownSecrets: [config.anthropicApiKey, config.anthropicAuthToken].filter(Boolean) });
   let captureOn = false;
+
+  const debugProxy = createDebugProxy({
+    store: captureStore,
+    upstreamProxy: config.allProxy || config.httpsProxy || config.httpProxy,
+  });
 
   const pty = createPtyManager({
     cwd: "/workspace",
@@ -51,10 +57,15 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
     captureOn, sessionAlive: pty.alive,
   }));
   fastify.post("/api/capture/enable", { preHandler: [requireAuth(sessionSecret)] }, async (_req, reply) => {
-    captureOn = true; reply.send({ captureOn: true });
+    await debugProxy.start();
+    debugProxy.setRecording(true);
+    captureOn = true;
+    reply.send({ captureOn: true, captureUp: debugProxy.isUp() });
   });
   fastify.post("/api/capture/disable", { preHandler: [requireAuth(sessionSecret)] }, async (_req, reply) => {
-    captureOn = false; reply.send({ captureOn: false });
+    debugProxy.setRecording(false);
+    captureOn = false;
+    reply.send({ captureOn: false });
   });
   fastify.post("/api/captures/clear", { preHandler: [requireAuth(sessionSecret)] }, async (_req, reply) => {
     captureStore.clear(); reply.send({ ok: true });
@@ -66,6 +77,9 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
 
   await fastify.listen({ port, host: "0.0.0.0" });
   const actualPort = fastify.server.address().port;
+
+  // Start the debug MITM proxy — non-throwing, best-effort
+  try { await debugProxy.start(); } catch { /* must not crash buildServer */ }
 
   const wss = new WebSocketServer({ noServer: true });
   fastify.server.on("upgrade", (req, socket, head) => {
@@ -111,7 +125,7 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
   }
 
   function buildClaudeEnv(cfg) {
-    return {
+    const env = {
       ...process.env,
       PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
       CLAUDE_CONFIG_DIR: cfg.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR,
@@ -124,6 +138,22 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
       NO_PROXY: cfg.noProxy, no_proxy: cfg.noProxy,
       API_TIMEOUT_MS: String(cfg.apiTimeoutMs),
     };
+
+    // If the MITM proxy is up, override claude's proxy env to route through it
+    // so we can capture HTTPS traffic. Remove ALL_PROXY to prevent claude from
+    // preferring SOCKS (which the MITM cannot chain through).
+    if (debugProxy.isUp()) {
+      const proxyUrl = debugProxy.proxyUrl();
+      env.HTTP_PROXY = proxyUrl;
+      env.http_proxy = proxyUrl;
+      env.HTTPS_PROXY = proxyUrl;
+      env.https_proxy = proxyUrl;
+      delete env.ALL_PROXY;
+      delete env.all_proxy;
+      Object.assign(env, debugProxy.caEnv());
+    }
+
+    return env;
   }
 
   return {
@@ -133,7 +163,7 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
     pty,
     setCaptureOn: (v) => { captureOn = v; },
     getCaptureOn: () => captureOn,
-    close: async () => { pty.kill(); wss.close(); await fastify.close(); },
+    close: async () => { await debugProxy.stop(); pty.kill(); wss.close(); await fastify.close(); },
   };
 }
 
