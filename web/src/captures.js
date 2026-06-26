@@ -18,8 +18,12 @@ export function mountCaptures(root) {
   const renderRow = (r) => {
     const row = document.createElement("div");
     row.className = "cap-row";
-    row.innerHTML = `<b>${r.method}</b> ${r.host}${r.path}
-      <div class="meta">${r.status || "—"} · ${r.latencyMs}ms · ${new Date(r.ts).toLocaleTimeString()}</div>`;
+    const b = row.appendChild(document.createElement("b"));
+    b.textContent = r.method;
+    row.appendChild(document.createTextNode(` ${r.host}${r.path}`));
+    const meta = row.appendChild(document.createElement("div"));
+    meta.className = "meta";
+    meta.textContent = `${r.status || "—"} · ${r.latencyMs}ms · ${new Date(r.ts).toLocaleTimeString()}`;
     row.onclick = () => {
       detail.style.display = "block";
       detail.textContent =
