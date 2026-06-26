@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git ripgrep curl ca-certificates jq tini gosu sudo openssl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 -s /bin/bash claude \
+RUN useradd -m -s /bin/bash claude \
     && install -d -o claude -g claude /workspace
 
 # Install the claude CLI AS the claude user so it lands in

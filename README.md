@@ -16,6 +16,22 @@ An isolated, browser-accessible Claude Code environment.
 - Live CPU/memory/network metrics.
 - Opt-in request/response capture for debugging (full capture with a container-local CA; secrets redacted; off by default).
 
+## Pre-built image
+
+Every push to `main` triggers an automated build published to GitHub Container Registry:
+
+```
+ghcr.io/ldm0206/claude-docker:latest
+```
+
+Pull directly:
+
+```bash
+docker pull ghcr.io/ldm0206/claude-docker:latest
+```
+
+Or replace `build: .` with `image: ghcr.io/ldm0206/claude-docker:latest` in `docker-compose.yml`.
+
 ## Security notes
 
 - HTTP only — front it with a TLS proxy for remote/company-network use.

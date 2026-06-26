@@ -1,7 +1,7 @@
 services:
   claude:
     build: .
-    image: claude-docker:latest
+    image: ghcr.io/ldm0206/claude-docker:latest
     ports:
       - "8080:8080"
     env_file: .env
