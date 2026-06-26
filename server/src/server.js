@@ -2,14 +2,13 @@ import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import { WebSocketServer } from "ws";
 import { readFileSync } from "node:fs";
-import { timingSafeEqualStr, signSession } from "./auth.js";
+import { timingSafeEqualStr, signSession, verifySession } from "./auth.js";
 import { requireAuth } from "./auth-middleware.js";
 import {
-  readCgroupCpu, readCgroupMemory, readNetDev, computeCpuPercent,
+  readCgroupCpu, readCgroupMemory, readNetDev,
 } from "./metrics.js";
 import { createCaptureStore } from "./capture-store.js";
 import { createPtyManager } from "./pty-manager.js";
-import os from "node:os";
 
 const read = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
 
@@ -72,7 +71,10 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
   fastify.server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url, "http://x");
     const cookieVal = parseCookie(req.headers.cookie || "")["session"];
-    if (!cookieVal || req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
+    if (!cookieVal || (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)) {
+      socket.destroy(); return;
+    }
+    if (!verifySession(cookieVal, sessionSecret)) {
       socket.destroy(); return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -84,13 +86,13 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
   wss.on("connection", (ws, pathname) => {
     if (pathname === "/ws/terminal") {
       if (!pty.alive) pty.start();
-      pty.onData((d) => ws.readyState === ws.OPEN && ws.send(d));
+      const unsubData = pty.onData((d) => ws.readyState === ws.OPEN && ws.send(d));
       ws.on("message", (raw) => {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "resize") pty.resize(msg.cols, msg.rows);
         else if (msg.type === "input") pty.write(msg.data);
       });
-      ws.on("close", () => {});
+      ws.on("close", unsubData);
     } else if (pathname === "/ws/captures") {
       const unsub = captureStore.subscribe((r) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(r)));
       ws.send(JSON.stringify(captureStore.list()));
@@ -112,7 +114,7 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
     return {
       ...process.env,
       PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
-      CLAUDE_CONFIG_DIR: config.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR,
+      CLAUDE_CONFIG_DIR: cfg.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR,
       ...(cfg.anthropicApiKey ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
       ...(cfg.anthropicAuthToken ? { ANTHROPIC_AUTH_TOKEN: cfg.anthropicAuthToken } : {}),
       ...(cfg.anthropicBaseUrl ? { ANTHROPIC_BASE_URL: cfg.anthropicBaseUrl } : {}),
