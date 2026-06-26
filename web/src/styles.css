@@ -1,0 +1,36 @@
+:root {
+  --bg: #F4F1EA;
+  --surface: #FFFFFF;
+  --surface-2: #FAF7F0;
+  --ink: #2B2A27;
+  --muted: #6B6760;
+  --accent: #C96442;
+  --accent-2: #D97757;
+  --border: #E4DED2;
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}
+h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; margin: 0; }
+#app { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; height: 100vh; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.panel h2 { font-size: 1rem; color: var(--muted); margin-bottom: 12px; letter-spacing: .02em; }
+.term-wrap { display: flex; flex-direction: column; min-height: 0; }
+.term-wrap .xterm { flex: 1; padding: 8px; background: #1E1B16; border-radius: var(--radius); }
+.unlock { max-width: 360px; margin: 12vh auto; }
+.unlock input, .unlock button { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 1rem; margin-top: 8px; }
+.unlock button { background: var(--accent); color: #fff; border: none; cursor: pointer; }
+.meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.meter .label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.meter .value { font-family: Georgia, serif; font-size: 1.5rem; }
+.warn { background: #FBEFE7; color: var(--accent); padding: 8px; border-radius: 8px; font-size: .85rem; }
+.cap-list { max-height: 260px; overflow: auto; }
+.cap-row { padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: .85rem; }
+.cap-row .meta { color: var(--muted); }
+.cap-detail { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem; max-height: 240px; overflow: auto; background: var(--surface-2); padding: 8px; border-radius: 8px; }
+button.tiny { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
