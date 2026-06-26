@@ -1,7 +1,10 @@
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
+import fastifyStatic from "@fastify/static";
 import { WebSocketServer } from "ws";
+import { existsSync } from "node:fs";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { timingSafeEqualStr, signSession, verifySession } from "./auth.js";
 import { requireAuth } from "./auth-middleware.js";
 import {
@@ -31,6 +34,12 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
 
   const fastify = Fastify();
   await fastify.register(cookie);
+
+  // Serve built SPA if web/dist exists (no-op in tests where /app/web/dist is absent)
+  const webDist = process.env.WEB_DIST || "/app/web/dist";
+  if (existsSync(webDist)) {
+    await fastify.register(fastifyStatic, { root: path.resolve(webDist), prefix: "/" });
+  }
 
   // Unguarded routes
   fastify.get("/health", async () => ({ ok: true }));
