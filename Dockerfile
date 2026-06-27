@@ -16,20 +16,20 @@ RUN useradd -m -s /bin/bash claude \
 # Download the claude binary directly.  The official install.sh delegates to
 # `claude install`, which skips writing the launcher when DISABLE_UPDATES=1
 # ("Updates are disabled by your administrator").  We download the binary
-# ourselves and symlink it into the expected PATH location instead.
+# ourselves into /home/claude/.local/bin (a REAL file, NOT a symlink) so it is
+# not shadowed by the claude-config volume mounted at /home/claude/.claude.
 USER claude
 RUN set -e; \
-    CLAUDE_DL_DIR="/home/claude/.claude/downloads"; \
-    mkdir -p "$CLAUDE_DL_DIR" /home/claude/.local/bin; \
+    mkdir -p /home/claude/.local/bin; \
     LATEST=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest); \
     MANIFEST=$(curl -fsSL "https://downloads.claude.ai/claude-code-releases/$LATEST/manifest.json"); \
     CHECKSUM=$(echo "$MANIFEST" | jq -r '.platforms["linux-x64"].checksum'); \
-    BINARY="$CLAUDE_DL_DIR/claude-$LATEST-linux-x64"; \
-    curl -fsSL -o "$BINARY" "https://downloads.claude.ai/claude-code-releases/$LATEST/linux-x64/claude"; \
-    echo "$CHECKSUM  $BINARY" | sha256sum -c; \
-    chmod +x "$BINARY"; \
-    ln -sf "$BINARY" /home/claude/.local/bin/claude; \
-    test -x /home/claude/.local/bin/claude
+    curl -fsSL -o /tmp/claude-bin "https://downloads.claude.ai/claude-code-releases/$LATEST/linux-x64/claude"; \
+    echo "$CHECKSUM  /tmp/claude-bin" | sha256sum -c; \
+    chmod +x /tmp/claude-bin; \
+    mv /tmp/claude-bin /home/claude/.local/bin/claude; \
+    test -x /home/claude/.local/bin/claude; \
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/claude/.bashrc
 USER root
 
 WORKDIR /workspace
