@@ -41,7 +41,17 @@ export function mountCaptures(root) {
 
   document.getElementById("cap-on").onclick = async () => {
     const r = await postJson("/api/capture/enable");
-    if (r.ok) warn.style.display = "block";
+    if (!r.ok) return;
+    const body = await r.json();
+    warn.style.display = "block";
+    if (!body.captureUp) {
+      warn.textContent = "⚠ Capture failed to start (proxy port in use?). Session not restarted.";
+      return;
+    }
+    if (body.restarted) {
+      warn.textContent = "⚠ Capture active — session restarted to route through the proxy. Bodies recorded (secrets redacted).";
+      setTimeout(() => { warn.textContent = "⚠ Capture active — full request/response bodies are being recorded with secrets redacted."; }, 5000);
+    }
   };
   document.getElementById("cap-off").onclick = async () => {
     await postJson("/api/capture/disable");

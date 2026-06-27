@@ -73,7 +73,16 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
     await debugProxy.start();
     debugProxy.setRecording(true);
     captureOn = true;
-    reply.send({ captureOn: true, captureUp: debugProxy.isUp() });
+    // Restart the PTY so it re-spawns with env routing through the MITM
+    // (buildClaudeEnv reads debugProxy.isUp()). Only when the MITM is actually
+    // up — otherwise claude would point at a dead proxy and fail all calls.
+    let restarted = false;
+    if (debugProxy.isUp()) {
+      restartInProgress = true;
+      try { pty.kill(); pty.start(); restarted = true; }
+      finally { restartInProgress = false; }
+    }
+    reply.send({ captureOn: true, captureUp: debugProxy.isUp(), restarted });
   });
   fastify.post("/api/capture/disable", { preHandler: [requireAuth(sessionSecret)] }, async (_req, reply) => {
     debugProxy.setRecording(false);
@@ -102,7 +111,14 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
   // The user flow is: enable capture (starts MITM) → restart session (PTY
   // re-spawns with env now routing through the MITM).
 
-  const wss = new WebSocketServer({ noServer: true });
+  // pingInterval/pingTimeout keep idle connections alive through reverse
+  // proxies / NAT (which drop idle TCP after 30-120s) and detect half-open
+  // sockets. PING/PONG are control frames — transparent to app data.
+  const wss = new WebSocketServer({
+    noServer: true,
+    pingInterval: 30000,
+    pingTimeout: 5000,
+  });
   fastify.server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url, "http://x");
     const cookieVal = parseCookie(req.headers.cookie || "")["session"];

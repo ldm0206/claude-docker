@@ -38,22 +38,45 @@ export function mountTerminal() {
   term.open(container);
   fit.fit();
 
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/terminal`);
-  ws.onmessage = (e) => {
-    const raw = e.data;
-    // JSON messages are structured events; raw strings are terminal output
-    try {
-      const msg = JSON.parse(raw);
-      if (msg.type === "pty-exit") showExitOverlay(msg.exitCode);
-      return;
-    } catch { /* not JSON — terminal data */ }
-    term.write(raw);
-  };
-  term.onData((d) => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "input", data: d })));
+  let ws = null;
+  let overlayShown = false;
+
+  function connect() {
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/terminal`);
+
+    ws.onopen = () => {
+      // Re-send dimensions after a reconnect so the server-side PTY matches xterm.
+      ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    };
+
+    ws.onmessage = (e) => {
+      const raw = e.data;
+      // JSON messages are structured events; raw strings are terminal output
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.type === "pty-exit") showExitOverlay(msg.exitCode);
+        return;
+      } catch { /* not JSON — terminal data */ }
+      term.write(raw);
+    };
+
+    ws.onclose = () => {
+      ws = null;
+      if (!overlayShown) showDisconnectOverlay();
+    };
+
+    ws.onerror = () => { /* onclose fires right after; no-op to suppress console noise */ };
+  }
+
+  connect();
+
+  term.onData((d) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "input", data: d })));
   window.addEventListener("resize", () => fit.fit());
-  term.onResize(({ cols, rows }) => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "resize", cols, rows })));
+  term.onResize(({ cols, rows }) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "resize", cols, rows })));
 
   function showExitOverlay(exitCode) {
+    if (overlayShown) return;
+    overlayShown = true;
     const overlay = document.createElement("div");
     overlay.className = "pty-overlay";
     overlay.innerHTML = `
@@ -63,7 +86,24 @@ export function mountTerminal() {
     container.appendChild(overlay);
     overlay.querySelector("#pty-restart").onclick = async () => {
       overlay.remove();
+      overlayShown = false;
       await postJson("/api/session/restart");
+    };
+  }
+
+  function showDisconnectOverlay() {
+    overlayShown = true;
+    const overlay = document.createElement("div");
+    overlay.className = "pty-overlay";
+    overlay.innerHTML = `
+      <h3>Disconnected</h3>
+      <div class="exit-code">The terminal connection was lost.</div>
+      <button id="pty-reconnect">Reconnect</button>`;
+    container.appendChild(overlay);
+    overlay.querySelector("#pty-reconnect").onclick = () => {
+      overlay.remove();
+      overlayShown = false;
+      connect();
     };
   }
 }
