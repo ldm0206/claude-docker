@@ -32,7 +32,9 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/health", s.handleHealth)
 	r.Post("/auth", s.handleAuth)
 	r.Post("/logout", s.handleLogout)
-	// /ws/* routes are registered by Tasks 7-8 (handlers auth internally).
+	// /ws/* routes check the cookie inside the handler before upgrading.
+	r.Get("/ws/terminal", s.handleTerminalWS)
+	r.Get("/ws/captures", s.handleCapturesWS)
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Get("/api/state", s.handleState)
