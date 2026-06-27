@@ -120,12 +120,15 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
     if (pathname === "/ws/terminal") {
       if (!pty.alive) pty.start();
       const unsubData = pty.onData((d) => ws.readyState === ws.OPEN && ws.send(d));
+      const unsubExit = pty.onExit((exitCode) => {
+        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "pty-exit", exitCode }));
+      });
       ws.on("message", (raw) => {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "resize") pty.resize(msg.cols, msg.rows);
         else if (msg.type === "input") pty.write(msg.data);
       });
-      ws.on("close", unsubData);
+      ws.on("close", () => { unsubData(); unsubExit(); });
     } else if (pathname === "/ws/captures") {
       const unsub = captureStore.subscribe((r) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(r)));
       ws.send(JSON.stringify(captureStore.list()));
