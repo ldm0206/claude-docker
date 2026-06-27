@@ -35,6 +35,7 @@ func (s *Server) Routes() http.Handler {
 	// /ws/* routes check the cookie inside the handler before upgrading.
 	r.Get("/ws/terminal", s.handleTerminalWS)
 	r.Get("/ws/captures", s.handleCapturesWS)
+	r.Get("/ws/metrics", s.handleMetricsWS)
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Get("/api/state", s.handleState)
@@ -129,4 +130,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// mustJSON serialises v for use as a WebSocket message payload. Encoding errors
+// are impossible for the map[string]any shapes we send, so they are ignored.
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
