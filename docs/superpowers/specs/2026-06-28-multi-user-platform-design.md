@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-Upgrade the existing single-user `claude-docker` into a **multi-user, isolated Claude Code platform** with an admin management panel. One container hosts many users; each gets an isolated Linux environment (home, workspace, Claude config), their own Claude credential binding, resource/traffic quotas, and persistent terminal sessions. The backend is rewritten in **Go** for a single lightweight static binary.
+Upgrade the existing single-user `claude-docker` into a **multi-user, isolated Claude Code platform** with an admin management panel. One container hosts many users; each gets an isolated Linux environment (home, workspace, Claude config), their own Claude credential binding, resource/traffic quotas, and persistent terminal sessions. The backend is rewritten in **Go** for a single lightweight static binary. The legacy opt-in **request/response capture** (MITM) debug feature is **retained**, now admin-only and per-session.
 
 ### Goals
 - Multi-user with strong per-user isolation via Linux accounts + filesystem permissions.
@@ -15,6 +15,7 @@ Upgrade the existing single-user `claude-docker` into a **multi-user, isolated C
 - Persistent, detachable terminal sessions (close browser → session survives).
 - Per-user SFTP access to workspace; admin gets a root shell.
 - Per-user monthly traffic accounting + live throughput.
+- **Admin-only, per-session request/response capture (MITM)** for debugging.
 - Responsive Claude-style UI with light/dark themes.
 - Lightweight: one Go binary, no Node runtime at serve time.
 
@@ -23,15 +24,16 @@ Upgrade the existing single-user `claude-docker` into a **multi-user, isolated C
 - Hard kernel disk quotas (we do soft quotas).
 - Workspace environment templates (prebuilt images / cloned repos).
 - Session audit recording / replay.
-- The legacy opt-in MITM request/response **capture** feature: retained conceptually as a future **admin-only** debug tool, but its multi-user redesign is deferred to a later spec. Not in v1.
+- Per-user self-service capture (capture is **admin-only** in v1).
 - Batch user operations, CSV export.
 
 ## 2. Architecture
 
-Single container, one Go binary running as **root** (uid 0). Root is required to `setuid` into per-user accounts — this is the unavoidable cost of filesystem-permission isolation (see §11 Security). The binary owns:
+Single container, one Go binary running as **root** (uid 0). Root is required to `setuid` into per-user accounts — this is the unavoidable cost of filesystem-permission isolation (see §12 Security). The binary owns:
 
-- **HTTP server** (port `${PORT:-8080}`): REST API + WebSocket (terminal, metrics) + serves the embedded SPA.
+- **HTTP server** (port `${PORT:-8080}`): REST API + WebSocket (terminal, metrics, captures) + serves the embedded SPA.
 - **Embedded SSH/SFTP server** (port `${SFTP_PORT:-22}`): file transfer + admin shell. No separate `sshd` daemon.
+- **MITM capture proxy** (`127.0.0.1:${CLAUDE_DEBUG_PROXY_PORT:-8888}`): lazy-started; signs leaf certs with a container-local CA. Admin-only, per-session.
 - **Session manager**: pool of persistent PTYs keyed by `(user_id, session_id)`.
 - **Quota monitor**: periodic `du` + cgroup v2 subgroups.
 - **Traffic accounter**: nftables counters matched on per-user cgroups → monthly buckets + live throughput.
@@ -39,7 +41,7 @@ Single container, one Go binary running as **root** (uid 0). Root is required to
 
 ```
                  ┌──────────────────────── container (root) ───────────────────────┐
-   browser ────► │ HTTP :8080 ──► Go binary ──► REST + WS(terminal/metrics) + SPA   │
+   browser ────► │ HTTP :8080 ──► Go binary ──► REST + WS(terminal/metrics/captures)│
    sftp client ─►│ SSH  :22   ──► Go binary ──► auth(DB) → chroot+setuid per user   │
                  │                       │                                         │
                  │   ┌────────────┐ ┌─────┴──────┐ ┌──────────┐ ┌──────────────┐  │
@@ -52,6 +54,7 @@ Single container, one Go binary running as **root** (uid 0). Root is required to
                  │   │                       /data/<u>/claude-config (700)   │       │
                  │   └──────────────────────────────────────────────────────┘       │
                  │   SQLite /data/app.db   ·   claude /opt/claude/bin/claude        │
+                 │   MITM :8888 (admin capture) → upstream (claude API)             │
                  └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,7 +107,8 @@ sessions(
   user_id INTEGER NOT NULL REFERENCES users(id),
   name TEXT,
   started_at INTEGER, last_seen_at INTEGER,
-  alive INTEGER NOT NULL DEFAULT 0         -- mirror of in-memory PTY state
+  alive INTEGER NOT NULL DEFAULT 0,        -- mirror of in-memory PTY state
+  capture INTEGER NOT NULL DEFAULT 0       -- admin capture enabled on this session
 )
 
 traffic(
@@ -121,7 +125,7 @@ audit_log(
 )
 ```
 
-**Effective quota** for a user = per-user override if set, else the bound `role_template`'s value.
+**Effective quota** for a user = per-user override if set, else the bound `role_template`'s value. Captures are held in memory (no table).
 
 ## 5. Per-User Environment & Isolation
 
@@ -151,7 +155,7 @@ Per user, on create:
 - **PTY survives WebSocket disconnect**: closing the browser tab only unsubscribes the WS; the PTY keeps running. Reconnecting to the same session id resumes output (detach/attach). This delivers "close browser → session not lost" and supports `screen`/`tmux` inside as a power-user extra.
 - **Session cap**: `max_sessions` (effective quota) bounds the number of **alive** sessions (including detached-but-running ones); creating beyond the cap is rejected (409).
 - **Admin force-offline**: `DELETE /api/admin/users/:id/sessions/:sid` kills one; `DELETE /api/admin/users/:id/sessions` kills all (used by suspend/disable).
-- **Terminal process**: root spawns `gosu <username> bash -l` via `creack/pty`; env injects the user's decrypted Claude credential (§8) + `CLAUDE_CONFIG_DIR` + PATH. Claude is launched manually by the user (unchanged from current design).
+- **Terminal process**: root spawns `gosu <username> bash -l` via `creack/pty`; env is built lazily per (re)start (so toggling capture or rebinding a credential takes effect on restart). Claude is launched manually by the user (unchanged from current design). Env injects the user's decrypted Claude credential (§8) + `CLAUDE_CONFIG_DIR` + PATH; if `sessions.capture=1`, env also routes through the MITM (§10).
 - **Admin terminal**: when an admin opens a terminal, the PTY runs as **root** directly (no gosu) — admin has full container root.
 
 Frontend terminal: xterm.js over `WS /ws/terminal?session=<id>`, with resize and a session-tab switcher.
@@ -172,7 +176,7 @@ Frontend terminal: xterm.js over `WS /ws/terminal?session=<id>`, with resize and
 - Admin creates a **credential preset**: a named bundle of `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` / `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`.
 - Encrypted with **AES-256-GCM** using `MASTER_KEY` (env, not stored) → `credential_presets.encrypted_blob`.
 - **Binding**: `users.credential_preset_id` points a user at a preset. A preset can bind many users (reuse).
-- **At runtime**: when spawning the user's PTY, the server decrypts the bound preset and injects the values into the PTY env. Plaintext exists only in the process env, never on disk.
+- **At runtime**: when spawning the user's PTY, the server decrypts the bound preset and injects the values into the PTY env. Plaintext exists only in the process env, never on disk. The decrypted secrets also feed capture redaction (§10).
 - **Rotation**: editing a preset takes effect on the user's next (re)started session.
 - Session cookies are HMAC-signed with a separate `SESSION_SECRET` (env).
 
@@ -183,7 +187,18 @@ Frontend terminal: xterm.js over `WS /ws/terminal?session=<id>`, with resize and
 - **Monthly view**: panel shows per-user (admin) / self (user) up/down (tx/rx) for the selected month; admin can reset a user's current-month counter (`POST /api/admin/users/:id/reset-traffic`) — zeroes the row.
 - **Live throughput**: exposed on `/ws/metrics` alongside CPU/mem, as bytes/s up/down.
 
-## 10. SSH / SFTP (embedded)
+## 10. Request/Response Capture (admin-only debug)
+
+Retained from the single-user design, now scoped **admin-only** and **per-session** so it does not affect other users.
+
+- **Mechanism**: a Go MITM proxy (`go-mitmproxy/go-mitmproxy`) signs leaf certs with a container-local CA. The CA is generated once by `entrypoint.sh` (root) and installed into the system trust store so claude trusts the MITM. The proxy listens on `127.0.0.1:${CLAUDE_DEBUG_PROXY_PORT:-8888}`, started lazily on first enable (not at boot).
+- **Per-session routing**: an admin enables capture on a specific session (typically their own admin terminal). That session's PTY env is rebuilt to set `HTTP_PROXY`/`HTTPS_PROXY` to the MITM URL (and drop `ALL_PROXY` so claude does not bypass via SOCKS), then the PTY is restarted. Only that session is affected — **routing lives in each PTY's env**, so the shared CA does not imply shared interception; other users' traffic never transits the MITM.
+- **Store**: request/response pairs (method, url, status, headers, body) held in memory, tagged with the producing session; **redacted** against that session's decrypted credential secrets (API key / token) so secrets never appear in the panel. Ephemeral — cleared on disable, on session end, or container restart.
+- **UI**: admin-only **Captures** panel — list of captured pairs with expand-to-view redacted request/response, filter by session, clear button. (In single-user this was the right-sidebar capture panel; here it is an admin nav section.)
+- API (admin only): `POST /api/admin/sessions/:id/capture/enable`, `POST /api/admin/sessions/:id/capture/disable`, `GET /api/admin/captures?session=`, `WS /ws/captures`, `POST /api/admin/captures/clear`.
+- Env (provided by entrypoint): `CLAUDE_DEBUG_CA_CERT`, `CLAUDE_DEBUG_CA_KEY`, `CLAUDE_DEBUG_SSL_CA_DIR`, `CLAUDE_DEBUG_PROXY_PORT`.
+
+## 11. SSH / SFTP (embedded)
 
 - Embedded Go SSH server (`gliderlabs/ssh` + `pkg/sftp`) on `${SFTP_PORT:-22}`. No external `sshd`.
 - **Auth**: `PasswordHandler` / `PublicKeyHandler` verify against the DB (argon2id) and the `suspended` flag. No Linux shadow password syncing needed.
@@ -191,21 +206,22 @@ Frontend terminal: xterm.js over `WS /ws/terminal?session=<id>`, with resize and
 - **Admin**: full interactive shell (PTY as root) + unrestricted SFTP; in the `sudo`/root context, no chroot.
 - Connection info (host:port, username, protocol SFTP) shown per-user in the admin panel and on the user's Files page.
 
-## 11. Security Posture & Threat Model
+## 12. Security Posture & Threat Model
 
 | Aspect | Posture |
 |---|---|
 | Server process | Runs as **root** inside container. Required: per-user isolation needs `setuid`, which only root (or `CAP_SETUID`) can do. Container remains the isolation boundary. |
 | Capabilities | `cap_add: [NET_ADMIN]` only (for nftables traffic accounting). No `--privileged`, no Docker socket. |
 | Credentials | Encrypted at rest (AES-256-GCM, `MASTER_KEY` env). Plaintext only in PTY env. |
+| Capture | The debug CA is trusted only inside the container. MITM is **opt-in, admin-only, per-session**; only the targeted session's env routes through it. Captured bodies are redacted against the session's secrets. |
 | Auth | argon2id passwords; signed httpOnly cookies; CSRF token on state-changing requests. |
 | Inter-user isolation | Filesystem 0700 + separate uids; SFTP chrooted. |
 | Network egress | Same as today; outbound proxy optional via env. **Front with TLS** (Caddy/nginx/Cloudflare) for remote use. |
-| Changed from before | README drops the "non-root" claim (root is now required and documented); adds NET_ADMIN; documents the multi-user threat model. |
+| Changed from before | README drops the "non-root" claim (root is now required and documented); adds NET_ADMIN; documents the multi-user + capture threat model. |
 
 Risks: root-in-container escape mitigated by no privileged caps / no socket; strongest isolation would need per-user containers (rejected for ops simplicity). Suspending/quota features limit blast radius of a misbehaving user.
 
-## 12. HTTP / WS API Surface
+## 13. HTTP / WS API Surface
 
 Auth (cookie session):
 - `POST /auth/login` `{username,password}` → `{role, mustChangePassword}`; sets cookie.
@@ -224,22 +240,23 @@ Admin (`/api/admin/*`, admin role only):
 - Credential presets: `GET`, `POST`, `PATCH /:id`, `DELETE /:id`.
 - Role templates: `GET`, `POST`, `PATCH /:id`, `DELETE /:id`.
 - Sessions: `GET /users/:id/sessions`, `DELETE /users/:id/sessions/:sid`, `DELETE /users/:id/sessions`.
+- Capture: `POST /sessions/:id/capture/enable|disable`, `GET /captures?session=`, `WS /ws/captures`, `POST /captures/clear`.
 - `GET /api/admin/online` — who's connected, active sessions, live usage.
 - `GET /api/admin/traffic?user=&month=`, `GET /api/admin/audit`.
 
-## 13. Frontend / UI
+## 14. Frontend / UI
 
 - **Stack**: keep `web/` Vite SPA; xterm.js for terminal; minimal charting (CSS bars for traffic).
-- **Layout**: left sidebar (Claude.ai-style). Sections: **Terminal/Sessions**, **Files**, **Traffic**; admin extras: **Users**, **Credentials**, **Templates**, **Audit**, **Settings**.
-- **Screens**: terminal (multi-session tabs, persistent, resize); Files (workspace browser + SFTP connection info); Traffic (monthly bars + live meters); Admin Users (table + edit drawer, as mocked); Credentials & Templates CRUD; Audit log.
+- **Layout**: left sidebar (Claude.ai-style). Sections: **Terminal/Sessions**, **Files**, **Traffic**; admin extras: **Users**, **Credentials**, **Templates**, **Captures**, **Audit**, **Settings**.
+- **Screens**: terminal (multi-session tabs, persistent, resize); Files (workspace browser + SFTP connection info); Traffic (monthly bars + live meters); Admin Users (table + edit drawer, as mocked); Credentials & Templates CRUD; **Captures** (admin debug, expand redacted req/resp, filter by session); Audit log.
 - **Themes**: light + dark + "follow system"; toggle in top bar (☀/🌙). Palette: warm cream (`#f5f1e8` light / `#1c1b1a` dark warm), clay-orange accent (`#c15f3c` / `#d97757`), rounded cards, subtle borders.
 - **Responsive**: desktop (sidebar + main side-by-side); tablet (collapsible sidebar); mobile (drawer sidebar, single column, terminal-first, panels as bottom sheets).
 
-## 14. Image, Dockerfile, Compose
+## 15. Image, Dockerfile, Compose
 
 **Multi-stage Dockerfile:**
 - Stage 1 `builder` (`golang:1.22-bookworm`): compile the Go binary (CGO disabled → static, thanks to `modernc.org/sqlite`).
-- Stage 2 runtime (`debian:bookworm-slim`): install runtime deps — `git ripgrep curl ca-certificates jq tini gosu openssl screen tmux nftables openssh-client` (git already present today; adds screen/tmux/nftables). Download claude binary to `/opt/claude/bin/claude`. Copy the Go binary. Entrypoint = `tini -- /entrypoint.sh` (root) → runs the single Go binary.
+- Stage 2 runtime (`debian:bookworm-slim`): install runtime deps — `git ripgrep curl ca-certificates jq tini gosu openssl screen tmux nftables openssh-client` (git already present today; adds screen/tmux/nftables). Download claude binary to `/opt/claude/bin/claude`. Copy the Go binary. Entrypoint = `tini -- /entrypoint.sh` (root) → generates the debug CA, installs it into the trust store, then runs the single Go binary.
 - SPA built in the builder and embedded via `embed.FS` (Go serves `/`).
 
 **Compose:**
@@ -260,7 +277,7 @@ volumes:
 ```
 The Node `server/` directory is removed; `web/` stays.
 
-## 15. Configuration (env)
+## 16. Configuration (env)
 
 | Var | Required | Purpose |
 |---|---|---|
@@ -271,12 +288,15 @@ The Node `server/` directory is removed; `web/` stays.
 | `SFTP_PORT` | no (22) | SSH/SFTP port. |
 | `DATA_DIR` / `HOME_ROOT` | no (/data, /home) | Storage roots. |
 | `CLAUDE_BIN` | no (/opt/claude/bin/claude) | Claude binary path. |
+| `CLAUDE_DEBUG_PROXY_PORT` | no (8888) | MITM capture proxy port (admin, lazy-started). |
 
-## 16. Migration from Single-User
+(CA paths `CLAUDE_DEBUG_CA_CERT` / `_CA_KEY` / `_SSL_CA_DIR` are generated and exported by `entrypoint.sh`, not user-configured.)
+
+## 17. Migration from Single-User
 
 Breaking upgrade. The old `.env` (`ACCESS_KEY` + shared `ANTHROPIC_*`) flow is replaced by the admin panel + DB. On first run, bootstrap an admin via env, then configure users/credentials/templates in the panel. Existing `/workspace` volume data is not auto-migrated; an admin can move it into a chosen user's workspace via SFTP or the admin shell. Document this in the README.
 
-## 17. Implementation Phases (overview — writing-plans will detail)
+## 18. Implementation Phases (overview — writing-plans will detail)
 
 0. **Go scaffold + single-user parity**: project layout replacing `server/`; HTTP + WS terminal; cookie auth; serve embedded SPA; `creack/pty`.
 1. **Identity**: users table, login, first-login change, bootstrap admin, sessions.
@@ -285,18 +305,20 @@ Breaking upgrade. The old `.env` (`ACCESS_KEY` + shared `ANTHROPIC_*`) flow is r
 4. **Credential presets + role/quota templates + binding** (AES-256-GCM).
 5. **Embedded SFTP/SSH** (chroot, admin shell).
 6. **Quotas** (disk soft + cgroup cpu/mem) + **traffic** (nft+cgroup, monthly, live) + suspend.
-7. **Admin panel + responsive Claude UI + light/dark themes**.
-8. **Hardening, README/compose rewrite, tests.**
+7. **Capture** (admin-only, per-session MITM, redaction, Captures panel).
+8. **Admin panel + responsive Claude UI + light/dark themes** (incl. Captures/Online/Traffic views).
+9. **Hardening, README/compose rewrite, tests.**
 
-## 18. Testing Strategy
+## 19. Testing Strategy
 
-- Unit: argon2id password flow, AES-GCM encrypt/decrypt, quota-effective resolution, traffic month bucketing, session-cap enforcement, config/env parsing. (Port the existing vitest spirit to Go tests.)
-- Integration: create→login→change-password→spawn session→detach→resume→kill; SFTP auth + chroot confinement (user A cannot read user B); suspend blocks login; delete purges dirs.
-- Manual/UI: terminal persistence across browser close, theme toggle, responsive breakpoints, admin CRUD flows, traffic meter sanity (transfer a known-size file, check counters).
+- Unit: argon2id password flow, AES-GCM encrypt/decrypt, quota-effective resolution, traffic month bucketing, session-cap enforcement, capture redaction, config/env parsing. (Port the existing vitest spirit to Go tests.)
+- Integration: create→login→change-password→spawn session→detach→resume→kill; SFTP auth + chroot confinement (user A cannot read user B); suspend blocks login; delete purges dirs; capture enable→traffic transits MITM→redacted pair appears→disable stops capture.
+- Manual/UI: terminal persistence across browser close, theme toggle, responsive breakpoints, admin CRUD flows, traffic meter sanity (transfer a known-size file, check counters), capture flow (enable on admin session, run a claude call, view redacted pair).
 
-## 19. Open Questions / Risks
+## 20. Open Questions / Risks
 
 - **cgroup v2 availability**: depends on host kernel + Docker cgroupfs writability. Mitigation: graceful fallback (disk-only) + deployment note.
 - **nftables + NET_ADMIN**: some hardened hosts restrict even with the cap. Mitigation: detect failure at startup, degrade to "traffic unavailable" rather than crash.
 - **Chroot + setuid SFTP correctness**: the trickiest piece; the plan must pick the child-process-vs-in-process approach and test confinement thoroughly.
+- **MITM library maturity** (`go-mitmproxy`): ensure custom-CA + request/response hooks cover the claude API traffic shape; redaction must catch all secret forms.
 - **claude binary path change** (`/home/claude/.local/bin` → `/opt/claude/bin`): verify the download/checksum flow still works and no volume shadows it.
