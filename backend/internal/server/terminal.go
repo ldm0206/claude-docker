@@ -35,18 +35,15 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	// pty.Manager.OnData/OnExit do not return unsubscribe funcs (the manager
-	// keeps callbacks for the PTY's lifetime). The closures capture the WS
-	// connection `c`; once it closes, c.Write errors are ignored by the
-	// callers (readLoop/waitExit still hold the reference). Connection-scoped
-	// cleanup is handled by the read loop below exiting + defer c.Close.
-	s.pty.OnData(func(b []byte) {
+	unsubData := s.pty.OnData(func(b []byte) {
 		_ = c.Write(ctx, websocket.MessageText, b)
 	})
-	s.pty.OnExit(func(code int) {
+	defer unsubData()
+	unsubExit := s.pty.OnExit(func(code int) {
 		msg, _ := json.Marshal(clientMsg{Type: "pty-exit", ExitCode: code})
 		_ = c.Write(ctx, websocket.MessageText, msg)
 	})
+	defer unsubExit()
 
 	for {
 		_, data, err := c.Read(ctx)

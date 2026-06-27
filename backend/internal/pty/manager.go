@@ -18,13 +18,24 @@ type Options struct {
 	Rows    uint16
 }
 
+type dataCb struct {
+	id int64
+	cb func([]byte)
+}
+
+type exitCb struct {
+	id int64
+	cb func(int)
+}
+
 type Manager struct {
 	opts    Options
 	cmd     *exec.Cmd
 	ptmx    *os.File
 	mu      sync.Mutex
-	dataCbs []func([]byte)
-	exitCbs []func(int)
+	nextID  int64
+	dataCbs []dataCb
+	exitCbs []exitCb
 }
 
 func New(opts Options) *Manager {
@@ -71,10 +82,10 @@ func (m *Manager) readLoop() {
 			out := make([]byte, n)
 			copy(out, buf[:n])
 			m.mu.Lock()
-			cbs := append([]func([]byte){}, m.dataCbs...)
+			cbs := append([]dataCb{}, m.dataCbs...)
 			m.mu.Unlock()
-			for _, cb := range cbs {
-				cb(out)
+			for _, e := range cbs {
+				e.cb(out)
 			}
 		}
 		if err != nil {
@@ -99,12 +110,12 @@ func (m *Manager) waitExit() {
 	}
 	m.mu.Lock()
 	m.ptmx.Close()
-	cbs := append([]func(int){}, m.exitCbs...)
+	cbs := append([]exitCb{}, m.exitCbs...)
 	m.cmd = nil
 	m.ptmx = nil
 	m.mu.Unlock()
-	for _, cb := range cbs {
-		cb(code)
+	for _, e := range cbs {
+		e.cb(code)
 	}
 }
 
@@ -129,16 +140,44 @@ func (m *Manager) Resize(cols, rows uint16) error {
 	return pty.Setsize(f, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
-func (m *Manager) OnData(cb func([]byte)) {
+// OnData registers a data callback and returns an unsubscribe func. Callers
+// MUST call the returned func when their consumer (e.g. a WebSocket) closes,
+// so the callback is removed and the slice does not grow unbounded.
+func (m *Manager) OnData(cb func([]byte)) func() {
 	m.mu.Lock()
-	m.dataCbs = append(m.dataCbs, cb)
+	id := m.nextID
+	m.nextID++
+	m.dataCbs = append(m.dataCbs, dataCb{id: id, cb: cb})
 	m.mu.Unlock()
+	return func() {
+		m.mu.Lock()
+		for i, e := range m.dataCbs {
+			if e.id == id {
+				m.dataCbs = append(m.dataCbs[:i], m.dataCbs[i+1:]...)
+				break
+			}
+		}
+		m.mu.Unlock()
+	}
 }
 
-func (m *Manager) OnExit(cb func(int)) {
+// OnExit registers an exit callback and returns an unsubscribe func.
+func (m *Manager) OnExit(cb func(int)) func() {
 	m.mu.Lock()
-	m.exitCbs = append(m.exitCbs, cb)
+	id := m.nextID
+	m.nextID++
+	m.exitCbs = append(m.exitCbs, exitCb{id: id, cb: cb})
 	m.mu.Unlock()
+	return func() {
+		m.mu.Lock()
+		for i, e := range m.exitCbs {
+			if e.id == id {
+				m.exitCbs = append(m.exitCbs[:i], m.exitCbs[i+1:]...)
+				break
+			}
+		}
+		m.mu.Unlock()
+	}
 }
 
 func (m *Manager) Stop() {
