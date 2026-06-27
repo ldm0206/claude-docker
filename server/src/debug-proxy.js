@@ -3,7 +3,8 @@ import { join } from "node:path";
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
-import { pki as forgePki } from "node-forge";
+import forge from "node-forge";
+const { pki: forgePki } = forge;
 import { Proxy } from "http-mitm-proxy";
 
 // --- Constants ---
