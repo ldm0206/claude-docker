@@ -32,7 +32,10 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
     // capture toggle + /api/session/restart re-evaluates buildClaudeEnv and
     // picks up the current debugProxy.isUp() routing.
     env: () => buildClaudeEnv(config),
-    command: "claude",
+    // Spawn a plain shell — the user runs `claude` manually when they want.
+    // claude's env (ANTHROPIC keys, proxy, PATH incl. ~/.local/bin) is still
+    // injected via buildClaudeEnv, so a manual `claude` picks it all up.
+    command: "bash",
     args: [],
   });
 
