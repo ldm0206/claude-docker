@@ -17,6 +17,8 @@
 - No MITM capture in this plan (Plan 5). Entrypoint is minimal (no CA generation here).
 - Required env at runtime: `ACCESS_KEY`, `SESSION_SECRET`. Optional: `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`, `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY`, `API_TIMEOUT_MS`, `PORT`.
 - Every task: write failing test → verify fail → implement → verify pass → commit. DRY, YAGNI.
+- **Test platform:** `creack/pty` is unix-only; cgroup/net paths are Linux-only. Pure-logic packages (`config`, `auth`, `pty/env`, `metrics` with fake readers) run with `go test` on the Windows host. Anything touching the PTY (`pty/manager`) runs in Linux via `docker run --rm -v <repo>/backend:/src -w /src golang:1.22 go test ./internal/pty/` (or WSL). The PTY integration test carries a `//go:build linux` guard.
+- **Frontend contract (parity — the SPA in `web/` is unchanged, so the Go server must speak its exact protocol):** `/ws/metrics` sends `{cpu:{usageUsec}, mem:{current,max}, net:{rxBytes,txBytes}, captureOn, alive, ts}` (the frontend computes CPU% itself from `usageUsec`); `/ws/terminal` sends raw PTY bytes plus JSON `{type:"pty-exit",exitCode:N}`; `POST /api/session/restart` kills+restarts the shared PTY; capture endpoints (`POST /api/capture/enable|disable`, `POST /api/captures/clear`, `GET /ws/captures`) are inert STUBS in this plan (real MITM is Plan 5) so the SPA's capture panel does not error.
 
 ## File Structure (this plan creates `backend/`)
 
@@ -461,7 +463,7 @@ cd backend && go get github.com/creack/pty && go mod tidy
 package pty
 
 import (
-	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -481,7 +483,7 @@ type Options struct {
 type Manager struct {
 	opts    Options
 	cmd     *exec.Cmd
-	ptmx    io.ReadWriteCloser
+	ptmx    *os.File
 	mu      sync.Mutex
 	dataCbs []func([]byte)
 	exitCbs []func(int)
@@ -581,12 +583,12 @@ func (m *Manager) Write(b []byte) error {
 
 func (m *Manager) Resize(cols, rows uint16) error {
 	m.mu.Lock()
-	w := m.ptmx
+	f := m.ptmx
 	m.mu.Unlock()
-	if w == nil {
+	if f == nil {
 		return nil
 	}
-	return pty.Setsize(w.(*pty.IO), &pty.Winsize{Cols: cols, Rows: rows})
+	return pty.Setsize(f, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
 func (m *Manager) OnData(cb func([]byte)) {
@@ -620,17 +622,17 @@ func (m *Manager) Alive() bool {
 }
 ```
 
-> Note: `creack/pty` returns `*os.File` from `StartWithSize`; it satisfies `io.ReadWriteCloser`. For `Setsize`, cast the concrete `*os.File` (use `pty.Setsize(fd *os.File, ...)`) — if the compiler rejects the `*pty.IO` cast, change `m.ptmx` to `*os.File` and call `pty.Setsize(m.ptmx, ...)`. Resolve to whatever compiles during Step 4.
-
 - [ ] **Step 3: Build to verify it compiles**
 
 Run: `cd backend && go build ./...`
-Expected: builds cleanly (fix the `Setsize` receiver type if the cast is wrong).
+Expected: builds cleanly. (`StartWithSize` returns `*os.File`; `pty.Setsize` takes `*os.File` — both already match the corrected types above.)
 
-- [ ] **Step 4: Add an integration smoke test**
+- [ ] **Step 4: Add a Linux-only integration test**
 
-`backend/internal/pty/manager_test.go`:
+`backend/internal/pty/manager_test.go` (note the build guard — this test cannot run on the Windows host):
 ```go
+//go:build linux
+
 package pty
 
 import (
@@ -660,7 +662,10 @@ func TestManagerEcho(t *testing.T) {
 }
 ```
 
-Run: `cd backend && go test ./internal/pty/`
+Run (Linux only — `creack/pty` is unix-only; on the Windows host use Docker):
+```bash
+docker run --rm -v "$(pwd)/backend:/src" -w /src golang:1.22 go test ./internal/pty/
+```
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -679,7 +684,7 @@ git commit -m "feat(backend): add persistent PTY manager (creack/pty)"
 - Create: `backend/internal/metrics/metrics_test.go`
 
 **Interfaces:**
-- Produces: `metrics.ReadCgroupCPU(read func(string)string) uint64` (usage_usec); `metrics.ReadCgroupMemory(read) (current uint64, max uint64, maxSet bool)`; `metrics.ReadNetDev(read) (rx, tx uint64)`; `metrics.ComputeCPUPercent(prev, cur uint64, elapsedMs int64, numCPU int) float64`.
+- Produces: `metrics.ReadCgroupCPU(read func(string)string) uint64` (usage_usec); `metrics.ReadCgroupMemory(read) (current uint64, max uint64, maxSet bool)`; `metrics.ReadNetDev(read) (rx, tx uint64)`. (The frontend computes CPU% itself from `usageUsec`, so no percent helper is needed.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -723,12 +728,6 @@ func TestNetDev(t *testing.T) {
 	rx, tx := ReadNetDev(r)
 	if rx != 100 || tx != 200 {
 		t.Fatalf("got rx=%d tx=%d", rx, tx)
-	}
-}
-
-func TestCPUPercent(t *testing.T) {
-	if got := ComputeCPUPercent(1_000_000, 2_000_000, 1000, 1); got != 100 {
-		t.Fatalf("expected 100, got %v", got)
 	}
 }
 ```
@@ -810,18 +809,6 @@ func ReadNetDev(read Reader) (rx, tx uint64) {
 	}
 	return rx, tx
 }
-
-func ComputeCPUPercent(prev, cur uint64, elapsedMs int64, numCPU int) float64 {
-	if elapsedMs <= 0 || cur <= prev {
-		return 0
-	}
-	if numCPU < 1 {
-		numCPU = 1
-	}
-	delta := float64(cur-prev) / 1e6
-	wall := float64(elapsedMs) / 1000
-	return (delta / wall / float64(numCPU)) * 100
-}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -846,9 +833,9 @@ git commit -m "feat(backend): port cgroup/net metrics readers to Go"
 - Add deps: `github.com/go-chi/chi/v5`
 
 **Interfaces:**
-- Produces: `server.New(cfg *config.Config) *Server`; `Server.Routes() http.Handler` (chi); `Server.PTY() *pty.Manager`.
+- Produces: `server.New(cfg *config.Config) *Server`; `Server.Routes() http.Handler` (chi); `Server.PTY() *pty.Manager`. Handlers: `/health`, `/auth`, `/logout`, authed `/api/state` + `/api/session/restart`, and inert capture stubs `/api/capture/enable|disable` + `/api/captures/clear`.
 - Consumes: `config.Config`, `auth.SignSession/VerifySession/EqualString`.
-- A cookie named `session`; helper `server.authed(r *http.Request) bool` used by `/api/state` and the WS handlers.
+- A cookie named `session`; helper `server.authed(r *http.Request) bool` used by `/api/*` (via middleware) and the WS handlers (called directly).
 
 - [ ] **Step 1: Add dependency**
 
@@ -950,9 +937,14 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/health", s.handleHealth)
 	r.Post("/auth", s.handleAuth)
 	r.Post("/logout", s.handleLogout)
+	// /ws/* routes are registered by Tasks 7-8 (handlers auth internally).
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Get("/api/state", s.handleState)
+		r.Post("/api/session/restart", s.handleRestart)
+		r.Post("/api/capture/enable", s.handleCaptureEnable)
+		r.Post("/api/capture/disable", s.handleCaptureDisable)
+		r.Post("/api/captures/clear", s.handleCapturesClear)
 	})
 	return r
 }
@@ -992,6 +984,29 @@ func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"captureOn": false, "sessionAlive": s.pty.Alive()})
+}
+
+// handleRestart kills and re-spawns the shared PTY (frontend calls this from
+// the "Session ended → Restart" button).
+func (s *Server) handleRestart(w http.ResponseWriter, _ *http.Request) {
+	s.pty.Stop()
+	if err := s.pty.Start(); err != nil {
+		writeJSON(w, 500, map[string]any{"error": "restart failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// Capture is inert in Plan 1 (real MITM arrives in Plan 5). These stubs keep
+// the existing SPA's capture panel from erroring.
+func (s *Server) handleCaptureEnable(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, map[string]any{"captureOn": false, "captureUp": false, "restarted": false})
+}
+func (s *Server) handleCaptureDisable(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, map[string]any{"captureOn": false})
+}
+func (s *Server) handleCapturesClear(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) authed(r *http.Request) bool {
@@ -1034,7 +1049,7 @@ git commit -m "feat(backend): add HTTP server with cookie-session auth"
 
 ---
 
-### Task 7: WebSocket terminal endpoint
+### Task 7: WebSocket terminal + captures stub
 
 **Files:**
 - Create: `backend/internal/server/terminal.go`
@@ -1064,10 +1079,11 @@ import (
 )
 
 type clientMsg struct {
-	Type string `json:"type"`
-	Data string `json:"data,omitempty"`
-	Cols uint16 `json:"cols,omitempty"`
-	Rows uint16 `json:"rows,omitempty"`
+	Type     string `json:"type"`
+	Data     string `json:"data,omitempty"`
+	Cols     uint16 `json:"cols,omitempty"`
+	Rows     uint16 `json:"rows,omitempty"`
+	ExitCode int    `json:"exitCode,omitempty"`
 }
 
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
@@ -1095,9 +1111,8 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	})
 	defer unsubData()
 	unsubExit := s.pty.OnExit(func(code int) {
-		msg, _ := json.Marshal(clientMsg{Type: "pty-exit"})
+		msg, _ := json.Marshal(clientMsg{Type: "pty-exit", ExitCode: code})
 		_ = c.Write(ctx, websocket.MessageText, msg)
-		_ = code
 	})
 	defer unsubExit()
 
@@ -1139,9 +1154,34 @@ func stripPort(h string) string {
 }
 ```
 
-Register the route in `server.go` `Routes()` — add after the authed `/api/state` line, inside the same `r.Group`:
+Register both WS routes in `server.go` `Routes()` as **top-level routes** (NOT inside the authed group — each handler checks the cookie itself before upgrading). Add them just above `r.Group(...)`:
 ```go
 r.Get("/ws/terminal", s.handleTerminalWS)
+r.Get("/ws/captures", s.handleCapturesWS)
+```
+
+Also add the inert captures WS stub to `terminal.go`:
+```go
+// handleCapturesWS is an inert stub (Plan 5 implements real capture): accept,
+// send an empty list, then keep the socket open reading/discarding input.
+func (s *Server) handleCapturesWS(w http.ResponseWriter, r *http.Request) {
+	if !s.authed(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: originPatterns(r)})
+	if err != nil {
+		return
+	}
+	defer c.Close(websocket.StatusNormalClosure, "")
+	ctx := r.Context()
+	_ = c.Write(ctx, websocket.MessageText, []byte("[]"))
+	for {
+		if _, _, err := c.Read(ctx); err != nil {
+			return
+		}
+	}
+}
 ```
 
 - [ ] **Step 3: Build to verify it compiles**
@@ -1178,7 +1218,7 @@ git commit -m "feat(backend): add WebSocket terminal endpoint (PTY<->WS bridge)"
 - Modify: `backend/internal/server/server.go` — register `GET /ws/metrics` in the authed group.
 
 **Interfaces:**
-- Consumes: `metrics` package, `s.authed`. Emits a JSON snapshot every 1.5s: `{cpu, mem:{current,max,maxSet}, net:{rx,tx}, ts}`.
+- Consumes: `metrics` package, `s.authed`, `s.pty.Alive()`. Emits a JSON snapshot every 1.5s in the shape the SPA's `metrics.js` expects: `{cpu:{usageUsec}, mem:{current,max}, net:{rxBytes,txBytes}, captureOn, alive, ts}` (frontend computes CPU% itself from `usageUsec`; `max` is a number when set, else `null`).
 
 - [ ] **Step 1: Implement the metrics handler**
 
@@ -1207,26 +1247,29 @@ func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	read := metrics.ReadFileFn()
-	var prevCPU uint64
-	prevTS := time.Now()
 	tk := time.NewTicker(1500 * time.Millisecond)
 	defer tk.Stop()
 	for {
-		curCPU := metrics.ReadCgroupCPU(read)
-		now := time.Now()
+		usageUsec := metrics.ReadCgroupCPU(read)
 		memCur, memMax, maxSet := metrics.ReadCgroupMemory(read)
 		rx, tx := metrics.ReadNetDev(read)
+		mem := map[string]any{"current": memCur}
+		if maxSet {
+			mem["max"] = memMax
+		} else {
+			mem["max"] = nil // unset → null (matches Node's JSON.stringify(Infinity))
+		}
 		snap := map[string]any{
-			"cpu": metrics.ComputeCPUPercent(prevCPU, curCPU, now.Sub(prevTS).Milliseconds(), 1),
-			"mem": map[string]any{"current": memCur, "max": memMax, "maxSet": maxSet},
-			"net": map[string]any{"rx": rx, "tx": tx},
-			"ts":  now.UnixMilli(),
+			"cpu":       map[string]any{"usageUsec": usageUsec},
+			"mem":       mem,
+			"net":       map[string]any{"rxBytes": rx, "txBytes": tx},
+			"captureOn": false,
+			"alive":     s.pty.Alive(),
+			"ts":        time.Now().UnixMilli(),
 		}
 		if err := c.Write(ctx, websocket.MessageText, mustJSON(snap)); err != nil {
 			return
 		}
-		prevCPU = curCPU
-		prevTS = now
 		select {
 		case <-ctx.Done():
 			return
@@ -1243,7 +1286,7 @@ func mustJSON(v any) []byte {
 	return b
 }
 ```
-Register in `Routes()` authed group: `r.Get("/ws/metrics", s.handleMetricsWS)`.
+Register in `Routes()` as a **top-level route** (handler auths internally), next to the other `/ws/*` routes: `r.Get("/ws/metrics", s.handleMetricsWS)`.
 
 - [ ] **Step 2: Build**
 
