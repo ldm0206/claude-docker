@@ -40,7 +40,7 @@ h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; m
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #4CAF50;
+  background: #7A9E7E;
   transition: background 0.3s;
 }
 .topbar-status.dead { background: var(--muted); }
@@ -84,13 +84,11 @@ h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; m
   color: #A09888;
   font-size: .8rem;
   font-family: ui-sans-serif, system-ui, sans-serif;
-  border-radius: var(--radius) var(--radius) 0 0;
 }
 .term-body {
   flex: 1;
   min-height: 0;
   background: var(--term-bg);
-  border-radius: 0 0 var(--radius) var(--radius);
   position: relative;
 }
 .term-body .xterm { height: 100%; padding: 4px 8px; }

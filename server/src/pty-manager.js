@@ -16,25 +16,24 @@ export function createPtyManager({ cwd, env, command = "claude", args = [], cols
   let proc = null;
   const dataCbs = new Set();
   const exitCbs = new Set();
-  let effectiveCommand = command;
-  let effectiveArgs = args;
-
   return {
     start() {
       if (proc) return;
       // Resolve env lazily on every start() so restarts pick up changes
       // (e.g. debugProxy.isUp() flipping true after capture is enabled).
       const envObj = resolveEnv(env);
+      let cmd = command;
+      let cmdArgs = args;
       // If claude binary is missing, fall back to bash so the user can
       // inspect the container environment and troubleshoot.
-      if (effectiveCommand === "claude" && !existsSync(CLAUDE_BIN_PATH)) {
-        effectiveCommand = "/bin/bash";
-        effectiveArgs = [];
+      if (cmd === "claude" && !existsSync(CLAUDE_BIN_PATH)) {
+        cmd = "/bin/bash";
+        cmdArgs = [];
         // Print a warning that will appear in the terminal
         const warning = "\r\n⚠ claude not found at " + CLAUDE_BIN_PATH + ", falling back to bash\r\n\r\n";
         for (const cb of dataCbs) cb(warning);
       }
-      proc = ptySpawn(effectiveCommand, effectiveArgs, {
+      proc = ptySpawn(cmd, cmdArgs, {
         name: "xterm-256color",
         cols, rows,
         cwd,

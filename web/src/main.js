@@ -20,7 +20,7 @@ async function boot() {
       <button class="topbar-toggle" id="sidebar-toggle" title="Toggle sidebar">≡</button>
     </header>
     <div class="workspace">
-      <section class="panel term-wrap" id="term-section">
+      <section class="panel" id="term-section">
         <div class="term-titlebar">
           <span>▸ Terminal</span>
         </div>
@@ -54,6 +54,7 @@ async function boot() {
   const sidebar = document.getElementById("sidebar");
   document.getElementById("sidebar-toggle").onclick = () => {
     sidebar.classList.toggle("collapsed");
+    window.dispatchEvent(new Event("resize"));
   };
 }
 boot();

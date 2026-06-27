@@ -84,8 +84,13 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
     captureStore.clear(); reply.send({ ok: true });
   });
   fastify.get("/api/captures", { preHandler: [requireAuth(sessionSecret)] }, async () => captureStore.list());
+  let restartInProgress = false;
+
   fastify.post("/api/session/restart", { preHandler: [requireAuth(sessionSecret)] }, async (_req, reply) => {
-    pty.kill(); pty.start(); reply.send({ ok: true });
+    restartInProgress = true;
+    pty.kill(); pty.start();
+    restartInProgress = false;
+    reply.send({ ok: true });
   });
 
   await fastify.listen({ port, host: "0.0.0.0" });
@@ -121,7 +126,7 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
       if (!pty.alive) pty.start();
       const unsubData = pty.onData((d) => ws.readyState === ws.OPEN && ws.send(d));
       const unsubExit = pty.onExit((exitCode) => {
-        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "pty-exit", exitCode }));
+        if (!restartInProgress && ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "pty-exit", exitCode }));
       });
       ws.on("message", (raw) => {
         const msg = JSON.parse(raw.toString());
