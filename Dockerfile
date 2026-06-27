@@ -13,13 +13,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash claude \
     && install -d -o claude -g claude /workspace
 
-# Install the claude CLI AS the claude user so it lands in
-# /home/claude/.local/bin (matches the runtime HOME and buildClaudeEnv's PATH).
+# Download the claude binary directly.  The official install.sh delegates to
+# `claude install`, which skips writing the launcher when DISABLE_UPDATES=1
+# ("Updates are disabled by your administrator").  We download the binary
+# ourselves and symlink it into the expected PATH location instead.
 USER claude
-RUN curl -fsSL https://claude.ai/install.sh -o /tmp/install-claude.sh \
-    && bash /tmp/install-claude.sh \
-    && rm /tmp/install-claude.sh \
-    && test -x /home/claude/.local/bin/claude
+RUN set -e; \
+    CLAUDE_DL_DIR="/home/claude/.claude/downloads"; \
+    mkdir -p "$CLAUDE_DL_DIR" /home/claude/.local/bin; \
+    LATEST=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest); \
+    MANIFEST=$(curl -fsSL "https://downloads.claude.ai/claude-code-releases/$LATEST/manifest.json"); \
+    CHECKSUM=$(echo "$MANIFEST" | jq -r '.platforms["linux-x64"].checksum'); \
+    BINARY="$CLAUDE_DL_DIR/claude-$LATEST-linux-x64"; \
+    curl -fsSL -o "$BINARY" "https://downloads.claude.ai/claude-code-releases/$LATEST/linux-x64/claude"; \
+    echo "$CHECKSUM  $BINARY" | sha256sum -c; \
+    chmod +x "$BINARY"; \
+    ln -sf "$BINARY" /home/claude/.local/bin/claude; \
+    test -x /home/claude/.local/bin/claude
 USER root
 
 WORKDIR /workspace
