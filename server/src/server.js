@@ -144,9 +144,11 @@ export async function buildServer({ config, sessionSecret, port = 8080 }) {
   }
 
   function buildClaudeEnv(cfg) {
+    const CLAUDE_BIN = "/home/claude/.local/bin";
     const env = {
       ...process.env,
-      PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
+      HOME: "/home/claude",
+      PATH: `${CLAUDE_BIN}:${process.env.PATH}`,
       CLAUDE_CONFIG_DIR: cfg.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR,
       ...(cfg.anthropicApiKey ? { ANTHROPIC_API_KEY: cfg.anthropicApiKey } : {}),
       ...(cfg.anthropicAuthToken ? { ANTHROPIC_AUTH_TOKEN: cfg.anthropicAuthToken } : {}),

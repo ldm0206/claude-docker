@@ -1,4 +1,5 @@
 import { spawn as ptySpawn } from "node-pty";
+import { existsSync } from "node:fs";
 
 /**
  * Resolve an env value that may be a plain object or a lazy factory function.
@@ -9,10 +10,14 @@ export function resolveEnv(env) {
   return typeof env === "function" ? env() : env;
 }
 
+const CLAUDE_BIN_PATH = "/home/claude/.local/bin/claude";
+
 export function createPtyManager({ cwd, env, command = "claude", args = [], cols = 80, rows = 24 }) {
   let proc = null;
   const dataCbs = new Set();
   const exitCbs = new Set();
+  let effectiveCommand = command;
+  let effectiveArgs = args;
 
   return {
     start() {
@@ -20,7 +25,16 @@ export function createPtyManager({ cwd, env, command = "claude", args = [], cols
       // Resolve env lazily on every start() so restarts pick up changes
       // (e.g. debugProxy.isUp() flipping true after capture is enabled).
       const envObj = resolveEnv(env);
-      proc = ptySpawn(command, args, {
+      // If claude binary is missing, fall back to bash so the user can
+      // inspect the container environment and troubleshoot.
+      if (effectiveCommand === "claude" && !existsSync(CLAUDE_BIN_PATH)) {
+        effectiveCommand = "/bin/bash";
+        effectiveArgs = [];
+        // Print a warning that will appear in the terminal
+        const warning = "\r\n⚠ claude not found at " + CLAUDE_BIN_PATH + ", falling back to bash\r\n\r\n";
+        for (const cb of dataCbs) cb(warning);
+      }
+      proc = ptySpawn(effectiveCommand, effectiveArgs, {
         name: "xterm-256color",
         cols, rows,
         cwd,
