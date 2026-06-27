@@ -69,15 +69,15 @@ func (m *Manager) Start() error {
 	}
 	m.cmd = cmd
 	m.ptmx = ptmx
-	go m.readLoop()
-	go m.waitExit()
+	go m.readLoop(ptmx)
+	go m.waitExit(cmd, ptmx)
 	return nil
 }
 
-func (m *Manager) readLoop() {
+func (m *Manager) readLoop(ptmx *os.File) {
 	buf := make([]byte, 4096)
 	for {
-		n, err := m.ptmx.Read(buf)
+		n, err := ptmx.Read(buf)
 		if n > 0 {
 			out := make([]byte, n)
 			copy(out, buf[:n])
@@ -94,8 +94,8 @@ func (m *Manager) readLoop() {
 	}
 }
 
-func (m *Manager) waitExit() {
-	err := m.cmd.Wait()
+func (m *Manager) waitExit(cmd *exec.Cmd, ptmx *os.File) {
+	err := cmd.Wait()
 	code := 0
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -109,11 +109,16 @@ func (m *Manager) waitExit() {
 		}
 	}
 	m.mu.Lock()
-	m.ptmx.Close()
+	current := m.ptmx == ptmx
+	if current {
+		m.cmd = nil
+		m.ptmx = nil
+	}
 	cbs := append([]exitCb{}, m.exitCbs...)
-	m.cmd = nil
-	m.ptmx = nil
 	m.mu.Unlock()
+	if current {
+		_ = ptmx.Close()
+	}
 	for _, e := range cbs {
 		e.cb(code)
 	}
@@ -183,12 +188,18 @@ func (m *Manager) OnExit(cb func(int)) func() {
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	cmd := m.cmd
+	ptmx := m.ptmx
+	m.cmd = nil
+	m.ptmx = nil
 	m.mu.Unlock()
 	if cmd == nil {
 		return
 	}
 	if p := cmd.Process; p != nil {
 		_ = p.Kill()
+	}
+	if ptmx != nil {
+		_ = ptmx.Close()
 	}
 }
 

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,8 +14,9 @@ import (
 )
 
 type Server struct {
-	cfg *config.Config
-	pty *pty.Manager
+	cfg        *config.Config
+	restarting atomic.Bool
+	pty        *pty.Manager
 }
 
 func New(cfg *config.Config) *Server {
@@ -89,6 +91,8 @@ func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 // handleRestart kills and re-spawns the shared PTY (frontend calls this from
 // the "Session ended → Restart" button).
 func (s *Server) handleRestart(w http.ResponseWriter, _ *http.Request) {
+	s.restarting.Store(true)
+	defer s.restarting.Store(false)
 	s.pty.Stop()
 	if err := s.pty.Start(); err != nil {
 		writeJSON(w, 500, map[string]any{"error": "restart failed"})

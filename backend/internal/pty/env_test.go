@@ -1,6 +1,8 @@
 package pty
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -8,6 +10,11 @@ import (
 )
 
 func TestBuildClaudeEnv(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("HOME", "/tmp/wrong")
+	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/skip")
+
 	cfg := &config.Config{
 		AccessKey:          "k",
 		AnthropicAuthToken: "tok",
@@ -25,12 +32,18 @@ func TestBuildClaudeEnv(t *testing.T) {
 		"HTTP_PROXY=http://p:7890",
 		"http_proxy=http://p:7890",
 		"API_TIMEOUT_MS=600000",
+		"CLAUDE_CONFIG_DIR=/tmp/skip",
 	} {
 		if !strings.Contains(j, want) {
 			t.Fatalf("env missing %q\n%s", want, j)
 		}
 	}
-	if !strings.Contains(j, "/home/claude/.local/bin") {
-		t.Fatalf("PATH must include claude bin\n%s", j)
+	expectedPathPrefix := fmt.Sprintf("/home/claude/.local/bin:/usr/bin:/bin")
+	if !strings.Contains(j, expectedPathPrefix) {
+		t.Fatalf("PATH must include claude bin, kept inherited\n%s", j)
+	}
+
+	if strings.Contains(j, "PATH="+origPath) {
+		t.Fatalf("PATH should include inherited PATH, not replace it\n%s", j)
 	}
 }

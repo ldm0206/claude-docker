@@ -3,6 +3,8 @@ package pty
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 )
@@ -10,11 +12,21 @@ import (
 const claudeBin = "/home/claude/.local/bin"
 
 func BuildClaudeEnv(cfg *config.Config) []string {
-	env := os.Environ()
-	set := func(k, v string) { env = append(env, k+"="+v) }
+	envMap := make(map[string]string, 32)
+	for _, e := range os.Environ() {
+		if key, val, ok := strings.Cut(e, "="); ok {
+			envMap[key] = val
+		}
+	}
+	set := func(k, v string) {
+		envMap[k] = v
+	}
 	set("HOME", "/home/claude")
-	set("PATH", fmt.Sprintf("%s:%s", claudeBin, os.Getenv("PATH")))
-	set("CLAUDE_CONFIG_DIR", "/home/claude/.claude")
+	path := envMap["PATH"]
+	set("PATH", fmt.Sprintf("%s:%s", claudeBin, path))
+	if _, ok := envMap["CLAUDE_CONFIG_DIR"]; !ok {
+		set("CLAUDE_CONFIG_DIR", "/home/claude/.claude")
+	}
 	if cfg.AnthropicAPIKey != "" {
 		set("ANTHROPIC_API_KEY", cfg.AnthropicAPIKey)
 	}
@@ -37,5 +49,11 @@ func BuildClaudeEnv(cfg *config.Config) []string {
 	set("NO_PROXY", cfg.NoProxy)
 	set("no_proxy", cfg.NoProxy)
 	set("API_TIMEOUT_MS", fmt.Sprintf("%d", cfg.APITimeoutMS))
+
+	env := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		env = append(env, k+"="+v)
+	}
+	sort.Strings(env)
 	return env
 }

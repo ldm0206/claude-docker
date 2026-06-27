@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 
 	"github.com/coder/websocket"
@@ -40,6 +41,9 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	})
 	defer unsubData()
 	unsubExit := s.pty.OnExit(func(code int) {
+		if s.restarting.Load() || s.pty.Alive() {
+			return
+		}
 		msg, _ := json.Marshal(clientMsg{Type: "pty-exit", ExitCode: code})
 		_ = c.Write(ctx, websocket.MessageText, msg)
 	})
@@ -70,16 +74,11 @@ func originPatterns(r *http.Request) []string {
 	if host == "" {
 		return nil
 	}
-	return []string{stripPort(host)}
-}
-
-func stripPort(h string) string {
-	for i := len(h) - 1; i >= 0; i-- {
-		if h[i] == ':' {
-			return h[:i]
-		}
+	strippedHost, _, err := net.SplitHostPort(host)
+	if err != nil {
+		strippedHost = host
 	}
-	return h
+	return []string{strippedHost}
 }
 
 // handleCapturesWS is an inert stub (Plan 5 implements real capture): accept,
