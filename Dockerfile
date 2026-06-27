@@ -16,7 +16,10 @@ RUN useradd -m -s /bin/bash claude \
 # Install the claude CLI AS the claude user so it lands in
 # /home/claude/.local/bin (matches the runtime HOME and buildClaudeEnv's PATH).
 USER claude
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN curl -fsSL https://claude.ai/install.sh -o /tmp/install-claude.sh \
+    && bash /tmp/install-claude.sh \
+    && rm /tmp/install-claude.sh \
+    && test -x /home/claude/.local/bin/claude
 USER root
 
 WORKDIR /workspace
