@@ -8,6 +8,8 @@
   --accent-2: #D97757;
   --border: #E4DED2;
   --radius: 12px;
+  --term-bg: #1E1B16;
+  --topbar-bg: #2B2A27;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
@@ -17,23 +19,113 @@ body {
   font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
 }
 h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; margin: 0; }
-#app { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; height: 100vh; }
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+
+/* Topbar */
+.topbar {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--topbar-bg);
+  color: var(--bg);
+  gap: 12px;
+}
+.topbar-brand {
+  font-family: Georgia, serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.topbar-status {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4CAF50;
+  transition: background 0.3s;
+}
+.topbar-status.dead { background: var(--muted); }
+.topbar-toggle {
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(244,241,234,0.3);
+  color: var(--bg);
+  font-size: 1.2rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.topbar-toggle:hover { background: rgba(244,241,234,0.1); }
+
+/* Workspace layout */
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  padding: 16px;
+  height: calc(100vh - 48px);
+  min-height: 0;
+}
+.sidebar.collapsed { display: none; }
+
+/* Panels */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 .panel h2 { font-size: 1rem; color: var(--muted); margin-bottom: 12px; letter-spacing: .02em; }
-.term-wrap { display: flex; flex-direction: column; min-height: 0; }
-.term-wrap .xterm { flex: 1; padding: 8px; background: #1E1B16; border-radius: var(--radius); }
+
+/* Terminal section */
+#term-section { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.term-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--term-bg);
+  color: #A09888;
+  font-size: .8rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.term-body {
+  flex: 1;
+  min-height: 0;
+  background: var(--term-bg);
+  border-radius: 0 0 var(--radius) var(--radius);
+  position: relative;
+}
+.term-body .xterm { height: 100%; padding: 4px 8px; }
+
+/* Meters */
+.meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.meter .label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.meter .value { font-family: Georgia, serif; font-size: 1.25rem; }
+.meter-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.meter-bar { height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
+.meter-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 2px; width: 0%; transition: width 0.5s; }
+.net-meter { grid-column: span 2; }
+
+/* Buttons */
+button, .tiny { transition: all 0.15s; }
+button:hover { filter: brightness(0.92); }
+button:active { transform: scale(0.97); }
+button.tiny { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: .85rem; }
+button.tiny:hover { background: var(--border); }
+
+/* Unlock */
 .unlock { max-width: 360px; margin: 12vh auto; }
 .unlock input, .unlock button { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 1rem; margin-top: 8px; }
 .unlock button { background: var(--accent); color: #fff; border: none; cursor: pointer; }
-.meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.meter .label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-.meter .value { font-family: Georgia, serif; font-size: 1.5rem; }
+.unlock button:hover { background: var(--accent-2); }
+
+/* Capture */
 .warn { background: #FBEFE7; color: var(--accent); padding: 8px; border-radius: 8px; font-size: .85rem; }
 .cap-list { max-height: 260px; overflow: auto; }
-.cap-row { padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: .85rem; }
+.cap-row { padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: .85rem; transition: background 0.15s; }
+.cap-row:hover { background: var(--surface-2); }
 .cap-row .meta { color: var(--muted); }
 .cap-detail { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem; max-height: 240px; overflow: auto; background: var(--surface-2); padding: 8px; border-radius: 8px; }
-button.tiny { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+
+/* PTY exit overlay */
 .pty-overlay {
   position: absolute;
   inset: 0;
@@ -45,25 +137,13 @@ button.tiny { background: var(--surface-2); border: 1px solid var(--border); bor
   z-index: 10;
   border-radius: var(--radius);
 }
-.pty-overlay h3 {
-  font-size: 1.1rem;
-  color: var(--ink);
-  margin-bottom: 8px;
-}
-.pty-overlay .exit-code {
-  color: var(--muted);
-  font-size: .85rem;
-  margin-bottom: 16px;
-}
-.pty-overlay button {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  padding: 10px 24px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: .9rem;
-}
-.pty-overlay button:hover {
-  background: var(--accent-2);
-}
+.pty-overlay h3 { font-size: 1.1rem; color: var(--ink); margin-bottom: 8px; }
+.pty-overlay .exit-code { color: var(--muted); font-size: .85rem; margin-bottom: 16px; }
+.pty-overlay button { background: var(--accent); color: #fff; border: none; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-size: .9rem; }
+.pty-overlay button:hover { background: var(--accent-2); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }

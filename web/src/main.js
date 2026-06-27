@@ -14,20 +14,46 @@ async function boot() {
     return;
   }
   app.innerHTML = `
-    <section class="panel term-wrap"><h2>Terminal</h2><div></div></section>
-    <aside style="display:flex;flex-direction:column;gap:16px;min-height:0">
-      <section class="panel">
-        <h2>Resources</h2>
-        <div class="meters">
-          <div class="meter"><div class="label">CPU</div><div class="value" id="cpu">—</div></div>
-          <div class="meter"><div class="label">Memory</div><div class="value" id="mem">—</div></div>
-          <div class="meter" style="grid-column:span 2"><div class="label">Network</div><div class="value" id="net">—</div></div>
+    <header class="topbar">
+      <span class="topbar-brand">Claude Code</span>
+      <span class="topbar-status" id="session-status"></span>
+      <button class="topbar-toggle" id="sidebar-toggle" title="Toggle sidebar">≡</button>
+    </header>
+    <div class="workspace">
+      <section class="panel term-wrap" id="term-section">
+        <div class="term-titlebar">
+          <span>▸ Terminal</span>
         </div>
+        <div class="term-body"></div>
       </section>
-      <section class="panel" id="cap-panel" style="flex:1;min-height:0;display:flex;flex-direction:column"></section>
-    </aside>`;
+      <aside class="sidebar" id="sidebar">
+        <section class="panel">
+          <h2>Resources</h2>
+          <div class="meters">
+            <div class="meter">
+              <div class="meter-row"><div class="label">CPU</div><div class="value" id="cpu">—</div></div>
+              <div class="meter-bar"><div class="meter-fill" id="cpu-bar"></div></div>
+            </div>
+            <div class="meter">
+              <div class="meter-row"><div class="label">Memory</div><div class="value" id="mem">—</div></div>
+              <div class="meter-bar"><div class="meter-fill" id="mem-bar"></div></div>
+            </div>
+            <div class="meter net-meter">
+              <div class="meter-row"><div class="label">Network</div><div class="value" id="net">—</div></div>
+            </div>
+          </div>
+        </section>
+        <section class="panel" id="cap-panel" style="flex:1;min-height:0;display:flex;flex-direction:column"></section>
+      </aside>
+    </div>`;
   mountTerminal();
   mountMetrics();
   mountCaptures(document.getElementById("cap-panel"));
+
+  // Sidebar toggle
+  const sidebar = document.getElementById("sidebar");
+  document.getElementById("sidebar-toggle").onclick = () => {
+    sidebar.classList.toggle("collapsed");
+  };
 }
 boot();

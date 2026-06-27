@@ -34,7 +34,7 @@ export function mountTerminal() {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon());
-  const container = document.querySelector(".term-wrap");
+  const container = document.querySelector(".term-body");
   term.open(container);
   fit.fit();
 
@@ -60,7 +60,6 @@ export function mountTerminal() {
       <h3>Session ended</h3>
       <div class="exit-code">Exit code: ${exitCode}</div>
       <button id="pty-restart">Restart</button>`;
-    container.style.position = "relative";
     container.appendChild(overlay);
     overlay.querySelector("#pty-restart").onclick = async () => {
       overlay.remove();
