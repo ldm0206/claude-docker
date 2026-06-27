@@ -9,6 +9,7 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/ui"
 )
 
 type Server struct {
@@ -44,6 +45,7 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/api/capture/disable", s.handleCaptureDisable)
 		r.Post("/api/captures/clear", s.handleCapturesClear)
 	})
+	r.Handle("/*", ui.SPA())
 	return r
 }
 
