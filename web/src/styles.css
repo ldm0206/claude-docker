@@ -34,3 +34,36 @@ h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; m
 .cap-row .meta { color: var(--muted); }
 .cap-detail { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem; max-height: 240px; overflow: auto; background: var(--surface-2); padding: 8px; border-radius: 8px; }
 button.tiny { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.pty-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(244,241,234,0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: var(--radius);
+}
+.pty-overlay h3 {
+  font-size: 1.1rem;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.pty-overlay .exit-code {
+  color: var(--muted);
+  font-size: .85rem;
+  margin-bottom: 16px;
+}
+.pty-overlay button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: .9rem;
+}
+.pty-overlay button:hover {
+  background: var(--accent-2);
+}
