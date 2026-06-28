@@ -31,14 +31,21 @@ func mustUID(t *testing.T, db *store.DB) int {
 // calls and supports the OnData/OnExit callback contract the WS handler relies
 // on. It does NOT spawn any process — that's the point (Plan 3 defers real
 // creack/pty + gosu to Linux runtime; the wiring logic is unit-testable here).
+//
+// resolvedEnv captures the env slice the PTY would have been spawned with. The
+// sessions.Manager wraps the EnvFactory in opts.Env (a func() []string); the
+// fake invokes it once at construction time (matching how the real Manager's
+// Start() calls opts.Env()) so tests can assert on the credential injection
+// (T8). It is NOT the raw func — it is the materialized []string.
 type fakePTY struct {
-	opts     pty.Options
-	startCnt int32
-	stopCnt  int32
-	mu       sync.Mutex
-	alive    bool
-	dataCbs  []func([]byte)
-	exitCbs  []func(int)
+	opts        pty.Options
+	resolvedEnv []string
+	startCnt    int32
+	stopCnt     int32
+	mu          sync.Mutex
+	alive       bool
+	dataCbs     []func([]byte)
+	exitCbs      []func(int)
 }
 
 func (f *fakePTY) Start() error {
@@ -75,12 +82,18 @@ func (f *fakePTY) OnExit(cb func(int)) func() {
 }
 
 // newFakePTYFactory returns a PTYFactory that records every PTY it builds so
-// tests can assert on Start/Stop counts.
+// tests can assert on Start/Stop counts. Each built fake materializes opts.Env
+// (the func() []string set by sessions.Manager) exactly once at construction,
+// mirroring how the real *pty.Manager consumes cmd.Env in Start(). This lets T8
+// tests inspect the decrypted credential env without a Linux PTY.
 func newFakePTYFactory() (sessions.PTYFactory, func() []*fakePTY) {
 	var mu sync.Mutex
 	var created []*fakePTY
 	factory := func(opts pty.Options) sessions.PTY {
 		f := &fakePTY{opts: opts}
+		if opts.Env != nil {
+			f.resolvedEnv = opts.Env()
+		}
 		mu.Lock()
 		created = append(created, f)
 		mu.Unlock()
