@@ -55,6 +55,20 @@ func (f *fakePTY) OnExit(cb func(int)) func() {
 	return func() {}
 }
 
+// fireExit invokes every registered OnExit callback in registration order
+// with the given code, simulating a natural PTY exit. Returns the number of
+// callbacks fired (so tests can assert the manager registered its reaper).
+func (f *fakePTY) fireExit(code int) int {
+	f.mu.Lock()
+	cbs := make([]func(int), len(f.exitCbs))
+	copy(cbs, f.exitCbs)
+	f.mu.Unlock()
+	for _, cb := range cbs {
+		cb(code)
+	}
+	return len(cbs)
+}
+
 // factory tracks created fakes keyed by their sessionID (returned via opts).
 func newFakeFactory(t *testing.T) (PTYFactory, func() []*fakePTY) {
 	t.Helper()
@@ -324,5 +338,69 @@ func TestManagerConcurrentCreateNoRace(t *testing.T) {
 	list, _ := mgr.List(uid)
 	if len(list) != 20 {
 		t.Fatalf("after concurrent create: list len = %d, want 20", len(list))
+	}
+}
+
+// TestCreateReapsNaturalExit verifies the cap-drift fix: when the PTY process
+// exits on its own (user typed `exit`, claude quit, …), the OnExit callback
+// registered by Create must (1) mark the DB row alive=0, (2) remove the entry
+// from the live map, so CountAliveSessionsForUser no longer counts it and the
+// cap does not drift upward across natural exits.
+func TestCreateReapsNaturalExit(t *testing.T) {
+	db := mustOpenDB(t)
+	uid := mustCreateUser(t, db, "exiter")
+	if err := db.SetUserMaxSessions(uid, 1); err != nil {
+		t.Fatalf("set max sessions: %v", err)
+	}
+	factory, _ := newFakeFactory(t)
+	mgr := NewManager(db, factory)
+
+	// Create one session; cap=1 so a second would currently be rejected.
+	id, p, err := mgr.Create("exiter", uid, "/tmp", envStub, pty.Options{})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	fp := p.(*fakePTY)
+
+	// Sanity: the manager registered an OnExit reaper (in addition to whatever
+	// the caller may add). At minimum 1 cb must be present post-Create.
+	if n := len(fp.exitCbs); n < 1 {
+		t.Fatalf("expected manager to register OnExit reaper, got %d cbs", n)
+	}
+
+	// Simulate the PTY exiting naturally by firing every registered OnExit cb.
+	fp.fireExit(0)
+
+	// (1) DB row flipped to alive=0.
+	row, err := db.GetSession(id)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.Alive {
+		t.Fatal("db row still alive=1 after natural exit")
+	}
+
+	// (2) Live map entry removed — Get returns (nil, false).
+	if gp, ok := mgr.Get("exiter", id); ok {
+		t.Fatalf("Get returned (%T, %v) after natural exit; want (nil, false)", gp, ok)
+	}
+
+	// (3) CountAliveSessionsForUser no longer counts it.
+	alive, err := db.CountAliveSessionsForUser(uid)
+	if err != nil {
+		t.Fatalf("count alive: %v", err)
+	}
+	if alive != 0 {
+		t.Fatalf("alive count = %d after natural exit, want 0 (cap drift)", alive)
+	}
+
+	// (4) The cap no longer drifts: a brand-new Create succeeds right up to
+	// the cap, proving the dead row isn't holding a slot.
+	if _, _, err := mgr.Create("exiter", uid, "/tmp", envStub, pty.Options{}); err != nil {
+		t.Fatalf("create after natural exit: %v (cap drifted)", err)
+	}
+	// And the next one must now hit the cap again.
+	if _, _, err := mgr.Create("exiter", uid, "/tmp", envStub, pty.Options{}); !errors.Is(err, ErrSessionCapReached) {
+		t.Fatalf("post-reap over-cap create err = %v, want ErrSessionCapReached", err)
 	}
 }

@@ -46,7 +46,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.db.GetUserByUsername(b.Username)
-	if errors.Is(err, store.ErrNotFound) || !auth.CheckPassword(b.Password, u.PasswordHash) {
+	if errors.Is(err, store.ErrNotFound) {
+		// Missing user: run a decoy argon2id verify so this path takes the
+		// same time as a wrong-password path, defeating user enumeration via
+		// response timing. Result is discarded; identical 401 is returned.
+		auth.CheckPasswordDecoy(b.Password)
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if err != nil {
+		// Any other DB error: same decoy, same uniform 401.
+		auth.CheckPasswordDecoy(b.Password)
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if !auth.CheckPassword(b.Password, u.PasswordHash) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}

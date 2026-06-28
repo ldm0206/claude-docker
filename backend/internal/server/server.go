@@ -9,10 +9,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/quota"
 	"github.com/ldm0206/claude-docker/backend/internal/secrets"
 	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
+	"github.com/ldm0206/claude-docker/backend/internal/traffic"
 	"github.com/ldm0206/claude-docker/backend/internal/ui"
 )
 
@@ -29,18 +31,37 @@ type Server struct {
 	// sess owns the live PTY pool keyed by username → sessionID. main.go
 	// constructs it with the real PTY factory; tests inject a fake.
 	sess *sessions.Manager
+
+	// quota and traffic are wired by main.go in T7. Both may be nil until then;
+	// every call site treats nil as "service unavailable" and degrades
+	// gracefully (disk usage returns zeros, suspend skips cgroup reclamation).
+	// Tests inject real *quota.Service with fake providers (DiskUsageProvider /
+	// CgroupWriter) for deterministic assertions, or pass nil to exercise the
+	// graceful path.
+	quota  *quota.Service
+	traffic *traffic.Service
 }
 
 // New wires a Server to the given config, user store, provisioner, session
-// manager, and credential master key. The db and sess remain owned by the
-// caller (main.go opens/closes them); New only retains them. masterKey is the
-// 32-byte AES-256-GCM key used to seal credential presets; it may be nil in
-// which case the credential endpoints return 500 (T9 wires the real key).
-func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, masterKey []byte) *Server {
+// manager, credential master key, and the optional quota / traffic services.
+// The db and sess remain owned by the caller (main.go opens/closes them); New
+// only retains them. masterKey is the 32-byte AES-256-GCM key used to seal
+// credential presets; it may be nil in which case the credential endpoints
+// return 500 (T9 wires the real key). quota and traffic may be nil — every
+// call site degrades gracefully (zeros / no-op); T7 passes the real ones.
+func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, masterKey []byte, q *quota.Service, tf *traffic.Service) *Server {
 	if sess == nil {
 		panic("server: New sess must not be nil")
 	}
-	return &Server{cfg: cfg, db: db, provisioner: provisioner, sess: sess, masterKey: masterKey}
+	return &Server{
+		cfg:         cfg,
+		db:          db,
+		provisioner: provisioner,
+		sess:        sess,
+		masterKey:   masterKey,
+		quota:       q,
+		traffic:     tf,
+	}
 }
 
 // buildUserEnvFactory returns an EnvFactory that resolves the per-user env
@@ -240,6 +261,10 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/api/admin/users/{id}", s.handleAdminDeleteUser)
 			r.Post("/api/admin/users/{id}/suspend", s.handleAdminSuspendUser)
 			r.Post("/api/admin/users/{id}/unsuspend", s.handleAdminUnsuspendUser)
+			// Admin usage/traffic endpoints (T6)
+			r.Get("/api/admin/users/{id}/usage", s.handleAdminUsage)
+			r.Get("/api/admin/traffic", s.handleAdminTraffic)
+			r.Post("/api/admin/users/{id}/reset-traffic", s.handleAdminResetTraffic)
 			// Admin session-management endpoints (T6)
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)

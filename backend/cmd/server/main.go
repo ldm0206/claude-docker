@@ -1,20 +1,26 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/quota"
 	"github.com/ldm0206/claude-docker/backend/internal/secrets"
-	"github.com/ldm0206/claude-docker/backend/internal/server"
+	ser "github.com/ldm0206/claude-docker/backend/internal/server"
 	"github.com/ldm0206/claude-docker/backend/internal/sessions"
+	sshserver "github.com/ldm0206/claude-docker/backend/internal/ssh"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
+	"github.com/ldm0206/claude-docker/backend/internal/traffic"
 )
 
 func main() {
@@ -41,21 +47,48 @@ func main() {
 	if err := store.BootstrapAdmin(db, cfg.BootstrapAdminUser, cfg.BootstrapAdminPassword, auth.HashPassword); err != nil {
 		log.Fatalf("[server] bootstrap admin: %v", err)
 	}
-	// PTY factory: each sessions.Manager.Create call builds a fresh *pty.Manager.
-	// The real creack/pty + gosu runtime is Linux-only; on Windows the factory
-	// is still constructed (it is not invoked until a session is created, which
-	// only happens via /ws/terminal — never hit by Windows `go test`).
+
+	// PTY factory: each sessions.Manager.Create builds a fresh *pty.Manager.
+	// Real creack/pty + gosu runtime is Linux-only.
 	factory := func(o pty.Options) sessions.PTY { return pty.New(o) }
 	sess := sessions.NewManager(db, factory)
-	// Load MASTER_KEY for AES-256-GCM sealing of credential presets. If unset,
-	// masterKey is nil and the credential endpoints return 500. T9 may harden
-	// this to a fatal startup error; for now we log and continue so the rest of
-	// the server works without credentials configured.
+
 	masterKey, merr := secrets.MasterKey(envLookup)
 	if merr != nil {
 		log.Printf("[server] warning: MASTER_KEY not configured — credential endpoints disabled (%v)", merr)
 	}
-	srv := server.New(cfg, db, system.DefaultProvisioner, sess, masterKey)
+
+	// --- Quota: disk soft-limit monitor + cgroup v2 cpu/mem (Linux runtime) ---
+	qsvc := quota.New(quota.DuDiskUsage{}, quota.CgroupFSWriter{}, "/home")
+
+	// --- Traffic: nftables cgroup counters → monthly buckets. Probe availability
+	// (needs the nft binary + CAP_NET_ADMIN); on failure the sampler runs no-op.
+	// Per-uid Read errors are also skipped gracefully inside the sampler.
+	tsvc := traffic.New(&traffic.NftCLI{}, db)
+	if _, err := exec.LookPath("nft"); err != nil {
+		tsvc.MarkAvailable(false)
+		log.Printf("[server] warning: nft not found — traffic accounting in no-op mode (%v)", err)
+	}
+
+	// --- Embedded SSH/SFTP server (Linux runtime). No-op Start off-Linux. ---
+	sftpPort := os.Getenv("SFTP_PORT")
+	if sftpPort == "" {
+		sftpPort = "22"
+	}
+	sshSrv := sshserver.New(db, ":"+sftpPort)
+
+	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, masterKey, qsvc, tsvc)
+
+	// Background loops.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go tsvc.Start(ctx, 5*time.Second)
+	go func() {
+		if err := sshSrv.Start(ctx); err != nil {
+			log.Printf("[server] ssh/sftp: %v", err)
+		}
+	}()
+
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {
 		log.Fatalf("[server] %v", err)
