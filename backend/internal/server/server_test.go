@@ -122,7 +122,7 @@ func newTestServer(t *testing.T) *testServer {
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
 	factory, created := newFakePTYFactory()
 	mgr := sessions.NewManager(db, factory)
-	srv := New(cfg, db, system.DefaultProvisioner, mgr)
+	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil)
 	return &testServer{Server: srv, createdPTYs: created}
 }
 

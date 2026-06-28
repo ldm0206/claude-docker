@@ -72,3 +72,34 @@ func (d *DB) DeletePreset(id int) error {
 	_, err := d.sql.Exec(`DELETE FROM credential_presets WHERE id = ?`, id)
 	return err
 }
+
+// UpdatePreset patches an existing credential_preset. nil fields are left
+// unchanged; non-nil fields update the column. The handler re-seals the
+// encrypted_blob before calling this when any secret field changed.
+func (d *DB) UpdatePreset(id int, patch PresetPatch) error {
+	existing, err := d.GetPreset(id)
+	if err != nil {
+		return err
+	}
+	if patch.Name != nil {
+		existing.Name = *patch.Name
+	}
+	if patch.EncryptedBlob != nil {
+		existing.EncryptedBlob = patch.EncryptedBlob
+	}
+	if patch.Note != nil {
+		existing.Note = *patch.Note
+	}
+	_, err = d.sql.Exec(
+		`UPDATE credential_presets SET name = ?, encrypted_blob = ?, note = ? WHERE id = ?`,
+		existing.Name, existing.EncryptedBlob, existing.Note, id,
+	)
+	return err
+}
+
+// PresetPatch is the partial-update payload for UpdatePreset.
+type PresetPatch struct {
+	Name           *string
+	EncryptedBlob  []byte // non-nil (even if empty) signals an update
+	Note           *string
+}

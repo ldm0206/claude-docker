@@ -22,20 +22,23 @@ type Server struct {
 	cfg         *config.Config
 	db          *store.DB
 	provisioner system.AccountProvisioner
+	masterKey   []byte
 
 	// sess owns the live PTY pool keyed by username → sessionID. main.go
 	// constructs it with the real PTY factory; tests inject a fake.
 	sess *sessions.Manager
 }
 
-// New wires a Server to the given config, user store, provisioner, and session
-// manager. The db and sess remain owned by the caller (main.go opens/closes
-// them); New only retains them.
-func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager) *Server {
+// New wires a Server to the given config, user store, provisioner, session
+// manager, and credential master key. The db and sess remain owned by the
+// caller (main.go opens/closes them); New only retains them. masterKey is the
+// 32-byte AES-256-GCM key used to seal credential presets; it may be nil in
+// which case the credential endpoints return 500 (T9 wires the real key).
+func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, masterKey []byte) *Server {
 	if sess == nil {
 		panic("server: New sess must not be nil")
 	}
-	return &Server{cfg: cfg, db: db, provisioner: provisioner, sess: sess}
+	return &Server{cfg: cfg, db: db, provisioner: provisioner, sess: sess, masterKey: masterKey}
 }
 
 // buildUserEnvFactory returns an EnvFactory that resolves the per-user env
@@ -161,6 +164,16 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
 			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
+			// Admin role-template CRUD (T7)
+			r.Get("/api/admin/templates", s.handleAdminListTemplates)
+			r.Post("/api/admin/templates", s.handleAdminCreateTemplate)
+			r.Patch("/api/admin/templates/{id}", s.handleAdminUpdateTemplate)
+			r.Delete("/api/admin/templates/{id}", s.handleAdminDeleteTemplate)
+			// Admin credential-preset CRUD (T7) — secrets are sealed with masterKey
+			r.Get("/api/admin/credentials", s.handleAdminListCredentials)
+			r.Post("/api/admin/credentials", s.handleAdminCreateCredential)
+			r.Patch("/api/admin/credentials/{id}", s.handleAdminUpdateCredential)
+			r.Delete("/api/admin/credentials/{id}", s.handleAdminDeleteCredential)
 		})
 	})
 	r.Handle("/*", ui.SPA())
