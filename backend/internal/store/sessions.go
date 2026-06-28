@@ -90,6 +90,14 @@ func (d *DB) MarkSessionExited(id string) error {
 	return err
 }
 
+// UpdateSessionName changes the name column of a session row. Used by the
+// session-create API to override the default name (opts.Username) with a
+// user-supplied one.
+func (d *DB) UpdateSessionName(id, name string) error {
+	_, err := d.sql.Exec(`UPDATE sessions SET name = ? WHERE id = ?`, name, id)
+	return err
+}
+
 // DeleteSession hard-deletes the metadata row. Used when a session is fully
 // removed from the user's list.
 func (d *DB) DeleteSession(id string) error {

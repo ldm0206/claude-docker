@@ -145,6 +145,10 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/api/capture/enable", s.handleCaptureEnable)
 		r.Post("/api/capture/disable", s.handleCaptureDisable)
 		r.Post("/api/captures/clear", s.handleCapturesClear)
+		// User session-management endpoints (T6)
+		r.Post("/api/sessions", s.handleCreateSession)
+		r.Get("/api/sessions", s.handleListSessions)
+		r.Delete("/api/sessions/{id}", s.handleDeleteSession)
 		// Admin user-management routes
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
@@ -153,6 +157,10 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/api/admin/users/{id}", s.handleAdminDeleteUser)
 			r.Post("/api/admin/users/{id}/suspend", s.handleAdminSuspendUser)
 			r.Post("/api/admin/users/{id}/unsuspend", s.handleAdminUnsuspendUser)
+			// Admin session-management endpoints (T6)
+			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
+			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
+			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
 		})
 	})
 	r.Handle("/*", ui.SPA())
