@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/server"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
@@ -25,13 +26,18 @@ func main() {
 	if dbPath == "" {
 		dbPath = "/data"
 	}
+	if err := os.MkdirAll(dbPath, 0o755); err != nil {
+		log.Fatalf("[server] mkdir data dir: %v", err)
+	}
 	dbPath = filepath.Join(dbPath, "app.db")
 	db, err := store.Open(dbPath)
 	if err != nil {
 		log.Fatalf("[server] open store: %v", err)
 	}
 	defer db.Close()
-	// (bootstrap wiring is Task 9 — do NOT add it here)
+	if err := store.BootstrapAdmin(db, cfg.BootstrapAdminUser, cfg.BootstrapAdminPassword, auth.HashPassword); err != nil {
+		log.Fatalf("[server] bootstrap admin: %v", err)
+	}
 	srv := server.New(cfg, db, system.DefaultProvisioner)
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {

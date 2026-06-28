@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-mkdir -p /workspace
-chown -R claude:claude /workspace
-export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-/home/claude/.claude}"
-exec gosu claude /app/claude-docker
+
+# Run as root: the server must setuid into per-user accounts for isolation.
+# (Per-user drop happens inside PTY spawns via gosu, not here.)
+mkdir -p /workspace /data /home
+chmod 0755 /home
+
+exec /app/claude-docker
