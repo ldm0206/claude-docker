@@ -130,6 +130,43 @@ func TestSumTrafficForUser(t *testing.T) {
 	}
 }
 
+func TestSumTrafficByMonth(t *testing.T) {
+	d := t.TempDir()
+	db, err := Open(filepath.Join(d, "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	// Two users, two months. June should aggregate across users; May excluded.
+	if err := db.AddTraffic(1, "2026-06", 200, 100); err != nil {
+		t.Fatalf("AddTraffic u1 June: %v", err)
+	}
+	if err := db.AddTraffic(2, "2026-06", 50, 25); err != nil {
+		t.Fatalf("AddTraffic u2 June: %v", err)
+	}
+	if err := db.AddTraffic(1, "2026-05", 999, 999); err != nil {
+		t.Fatalf("AddTraffic u1 May: %v", err)
+	}
+
+	rx, tx, err := db.SumTrafficByMonth("2026-06")
+	if err != nil {
+		t.Fatalf("SumTrafficByMonth: %v", err)
+	}
+	if rx != 250 || tx != 125 {
+		t.Fatalf("expected 250/125 for June across users, got %d/%d", rx, tx)
+	}
+
+	// Missing month → zeros, no error.
+	rx, tx, err = db.SumTrafficByMonth("2099-01")
+	if err != nil {
+		t.Fatalf("SumTrafficByMonth missing month: %v", err)
+	}
+	if rx != 0 || tx != 0 {
+		t.Fatalf("expected 0/0 for missing month, got %d/%d", rx, tx)
+	}
+}
+
 func TestListTrafficForUser(t *testing.T) {
 	d := t.TempDir()
 	db, err := Open(filepath.Join(d, "test.db"))

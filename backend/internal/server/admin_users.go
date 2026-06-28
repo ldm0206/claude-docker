@@ -167,6 +167,14 @@ func (s *Server) handleAdminSuspendUser(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 500, map[string]any{"error": "set suspended failed"})
 		return
 	}
+	// T6: reclaim live resources. KillAll stops every live PTY for the user and
+	// marks their session rows exited (best-effort — see sessions.Manager).
+	// RemoveCgroup tears down the cgroup-v2 limits; quota.Service degrades
+	// (logs + no-op) on error, and a nil quota is skipped entirely.
+	_ = s.sess.KillAll(u.Username)
+	if s.quota != nil {
+		_ = s.quota.RemoveCgroup(u.UID)
+	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

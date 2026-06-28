@@ -90,7 +90,7 @@ func newTestServerWithAdmin(t *testing.T) (*Server, *fakeProvisioner, *store.DB)
 	// tests never create real sessions, so the factory is never invoked; it
 	// just has to be non-nil so server.New doesn't panic.
 	mgr := sessions.NewManager(db, newFakePTYFactoryForAdmin())
-	srv := New(cfg, db, fake, mgr, nil)
+	srv := New(cfg, db, fake, mgr, nil, nil, nil)
 	return srv, fake, db
 }
 

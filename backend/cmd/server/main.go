@@ -55,7 +55,7 @@ func main() {
 	if merr != nil {
 		log.Printf("[server] warning: MASTER_KEY not configured — credential endpoints disabled (%v)", merr)
 	}
-	srv := server.New(cfg, db, system.DefaultProvisioner, sess, masterKey)
+	srv := server.New(cfg, db, system.DefaultProvisioner, sess, masterKey, nil, nil)
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {
 		log.Fatalf("[server] %v", err)

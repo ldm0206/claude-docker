@@ -82,3 +82,17 @@ func (d *DB) SumTrafficForUser(userID int) (rx, tx int64, err error) {
 	}
 	return rx, tx, nil
 }
+
+// SumTrafficByMonth returns the total rx and tx bytes across ALL users for the
+// given year-month. Used by the admin traffic-aggregate endpoint. Rows for
+// other months are excluded; a month with no rows returns 0,0,nil.
+func (d *DB) SumTrafficByMonth(yearMonth string) (rx, tx int64, err error) {
+	err = d.sql.QueryRow(
+		`SELECT COALESCE(SUM(rx_bytes),0), COALESCE(SUM(tx_bytes),0) FROM traffic WHERE year_month = ?`,
+		yearMonth,
+	).Scan(&rx, &tx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("sum traffic by month: %w", err)
+	}
+	return rx, tx, nil
+}
