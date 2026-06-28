@@ -120,11 +120,15 @@ func originPatterns(r *http.Request) []string {
 	return []string{strippedHost}
 }
 
-// handleCapturesWS is an inert stub (Plan 5 implements real capture): accept,
-// send an empty list, then keep the socket open reading/discarding input.
-// Auth is enforced via authWSUser (Fix 3) — same gate as the terminal WS.
+// handleCapturesWS pushes captured (redacted) request/response records to the
+// admin Captures panel over a WebSocket. Admin-only (authWSUser rejects
+// suspended/deleted, 401). On connect it sends the current list (optionally
+// filtered by ?session=<id>), then pushes each new record as it lands. The
+// push wiring lives in Server.captureFanout (testable without a real WS);
+// this handler just bridges it to the websocket connection.
 func (s *Server) handleCapturesWS(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authWSUser(r); !ok {
+	u, ok := s.authWSUser(r)
+	if !ok || u.Role != "admin" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -134,7 +138,13 @@ func (s *Server) handleCapturesWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close(websocket.StatusNormalClosure, "")
 	ctx := r.Context()
-	_ = c.Write(ctx, websocket.MessageText, []byte("[]"))
+	session := r.URL.Query().Get("session")
+	write := func(b []byte) bool {
+		return c.Write(ctx, websocket.MessageText, b) == nil
+	}
+	// done is closed when the client disconnects (Read returns).
+	done := make(chan struct{})
+	go func() { defer close(done); s.captureFanout(write, done, session) }()
 	for {
 		if _, _, err := c.Read(ctx); err != nil {
 			return

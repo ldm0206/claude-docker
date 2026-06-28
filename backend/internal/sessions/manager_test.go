@@ -35,7 +35,7 @@ func (f *fakePTY) Stop() {
 	f.alive = false
 	f.mu.Unlock()
 }
-func (f *fakePTY) Write(b []byte) error { return nil }
+func (f *fakePTY) Write(b []byte) error           { return nil }
 func (f *fakePTY) Resize(cols, rows uint16) error { return nil }
 func (f *fakePTY) Alive() bool {
 	f.mu.Lock()
@@ -111,8 +111,9 @@ func mustCreateUser(t *testing.T, db *store.DB, username string) (id int) {
 	return u.ID
 }
 
-// envStub returns an EnvFactory that yields a stable env slice.
-func envStub(_ string) []string { return []string{"PATH=/usr/bin"} }
+// envStub returns an EnvFactory that yields a stable env slice. (P5-T3: the
+// EnvFactory signature now takes (username, sessionID); envStub ignores both.)
+func envStub(_, _ string) []string { return []string{"PATH=/usr/bin"} }
 
 func TestManagerCreateReturnsPTWithoutStart(t *testing.T) {
 	db := mustOpenDB(t)
@@ -248,6 +249,59 @@ func TestManagerKillErrorsOnUnknown(t *testing.T) {
 	mgr := NewManager(db, func(pty.Options) PTY { return &fakePTY{} })
 	if err := mgr.Kill("nobody", "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("kill unknown err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestManagerRestartStopsAndStartsInPlace proves the P5-T3 Restart helper:
+// Stop+Start on the SAME PTY instance, keeping the same session id + DB row
+// (alive=1), and reusing the existing map entry (Get still finds it).
+func TestManagerRestartStopsAndStartsInPlace(t *testing.T) {
+	db := mustOpenDB(t)
+	uid := mustCreateUser(t, db, "restarter")
+	factory, _ := newFakeFactory(t)
+	mgr := NewManager(db, factory)
+
+	id, p, err := mgr.Create("restarter", uid, "/tmp", envStub, pty.Options{})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	fp := p.(*fakePTY)
+	if err := fp.Start(); err != nil { // mirror the WS lazy-start
+		t.Fatalf("initial start: %v", err)
+	}
+	startBefore := atomic.LoadInt32(&fp.startCnt)
+	stopBefore := atomic.LoadInt32(&fp.stopCnt)
+
+	if err := mgr.Restart("restarter", id); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	if got := atomic.LoadInt32(&fp.stopCnt); got != stopBefore+1 {
+		t.Fatalf("restart Stop count = %d, want %d", got, stopBefore+1)
+	}
+	if got := atomic.LoadInt32(&fp.startCnt); got != startBefore+1 {
+		t.Fatalf("restart Start count = %d, want %d", got, startBefore+1)
+	}
+	// Same instance reused (not a new PTY).
+	if got, ok := mgr.Get("restarter", id); !ok || got != p {
+		t.Fatalf("Restart must reuse the same PTY; got ok=%v mismatch=%v", ok, got != p)
+	}
+	// DB row stays alive=1 (Restart does NOT mark the session exited).
+	row, err := db.GetSession(id)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if !row.Alive {
+		t.Fatal("DB row must stay alive=1 across a Restart (the session did not exit)")
+	}
+}
+
+// TestManagerRestartUnknownReturnsErrNotFound proves Restart is a no-op that
+// surfaces ErrNotFound for an id that's not in the live map.
+func TestManagerRestartUnknownReturnsErrNotFound(t *testing.T) {
+	db := mustOpenDB(t)
+	mgr := NewManager(db, func(pty.Options) PTY { return &fakePTY{} })
+	if err := mgr.Restart("nobody", "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("restart unknown err = %v, want ErrNotFound", err)
 	}
 }
 

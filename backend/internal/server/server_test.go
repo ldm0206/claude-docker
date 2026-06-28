@@ -45,7 +45,7 @@ type fakePTY struct {
 	mu          sync.Mutex
 	alive       bool
 	dataCbs     []func([]byte)
-	exitCbs      []func(int)
+	exitCbs     []func(int)
 }
 
 func (f *fakePTY) Start() error {
@@ -61,7 +61,7 @@ func (f *fakePTY) Stop() {
 	f.alive = false
 	f.mu.Unlock()
 }
-func (f *fakePTY) Write(b []byte) error          { return nil }
+func (f *fakePTY) Write(b []byte) error           { return nil }
 func (f *fakePTY) Resize(cols, rows uint16) error { return nil }
 func (f *fakePTY) Alive() bool {
 	f.mu.Lock()
@@ -135,7 +135,7 @@ func newTestServer(t *testing.T) *testServer {
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
 	factory, created := newFakePTYFactory()
 	mgr := sessions.NewManager(db, factory)
-	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil, nil, nil)
+	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil, nil, nil, nil)
 	return &testServer{Server: srv, createdPTYs: created}
 }
 
