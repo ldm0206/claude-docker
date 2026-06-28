@@ -50,6 +50,12 @@ func CheckPassword(pw, encoded string) bool {
 	if len(want) == 0 {
 		return false
 	}
+	// Guard against argon2.IDKey panicking on attacker-crafted params (e.g.
+	// memory < 8*threads, or p==0 after the uint8 cast). Return false cleanly
+	// rather than crashing the process on a malformed stored hash.
+	if t == 0 || p == 0 || m < 8*uint32(p) {
+		return false
+	}
 	got := argon2.IDKey([]byte(pw), salt, t, m, uint8(p), uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
