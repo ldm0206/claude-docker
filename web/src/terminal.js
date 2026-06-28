@@ -2,108 +2,81 @@ import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "xterm/css/xterm.css";
-import { postJson } from "./api.js";
 
-export function mountTerminal() {
+// mountTerminal(root): multi-session terminal. GET /api/sessions lists the
+// caller's sessions; a WS to /ws/terminal?session=<id> attaches (or creates
+// if id omitted). The server replies with {type:"session",id} on connect.
+export function mountTerminal(root) {
+  root.innerHTML = `
+    <div class="session-tabs" id="sts"></div>
+    <div class="term-wrap"><div class="term-body" id="termroot"></div></div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn ghost tiny" id="new-sess">+ New session</button>
+      <button class="btn danger tiny" id="kill-sess">Kill current</button>
+      <span class="muted tiny" id="term-status"></span>
+    </div>`;
+
   const term = new Terminal({
     fontFamily: "JetBrains Mono, ui-monospace, monospace",
-    theme: {
-      background: "#1E1B16",
-      foreground: "#F4F1EA",
-      cursor: "#D97757",
-      cursorAccent: "#1E1B16",
-      selection: "rgba(217,119,87,0.3)",
-      black: "#1E1B16",
-      red: "#C96442",
-      green: "#7A9E7E",
-      yellow: "#D4A856",
-      blue: "#6B8FA3",
-      magenta: "#A37E8C",
-      cyan: "#7EA3A8",
-      white: "#F4F1EA",
-      brightBlack: "#6B6760",
-      brightRed: "#D97757",
-      brightGreen: "#9BBF9F",
-      brightYellow: "#E4C07A",
-      brightBlue: "#8BAFC3",
-      brightMagenta: "#BD9EAC",
-      brightCyan: "#9EC3C8",
-      brightWhite: "#FFFFFF",
-    },
+    theme: { background: "#1f1e1d", foreground: "#d6cab6", cursor: "#d97757" },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon());
-  const container = document.querySelector(".term-body");
-  term.open(container);
+  term.open(document.getElementById("termroot"));
   fit.fit();
 
+  let sessions = [];
+  let currentSID = null;
   let ws = null;
-  let overlayShown = false;
 
-  function connect() {
-    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/terminal`);
-
-    ws.onopen = () => {
-      // Re-send dimensions after a reconnect so the server-side PTY matches xterm.
-      ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-    };
-
-    ws.onmessage = (e) => {
-      const raw = e.data;
-      // JSON messages are structured events; raw strings are terminal output
-      try {
-        const msg = JSON.parse(raw);
-        if (msg.type === "pty-exit") showExitOverlay(msg.exitCode);
-        return;
-      } catch { /* not JSON — terminal data */ }
-      term.write(raw);
-    };
-
-    ws.onclose = () => {
-      ws = null;
-      if (!overlayShown) showDisconnectOverlay();
-    };
-
-    ws.onerror = () => { /* onclose fires right after; no-op to suppress console noise */ };
+  async function refreshSessions() {
+    try { sessions = await (await fetch("/api/sessions")).json(); } catch { sessions = []; }
+    const tabs = document.getElementById("sts");
+    tabs.innerHTML = "";
+    for (const s of sessions) {
+      const t = document.createElement("div");
+      t.className = "session-tab" + (s.id === currentSID ? " active" : "");
+      t.textContent = (s.name || s.id.slice(0, 8)) + (s.alive ? "" : " (dead)");
+      t.onclick = () => attach(s.id);
+      tabs.appendChild(t);
+    }
   }
 
-  connect();
+  function attach(sid) {
+    currentSID = sid || "";
+    if (ws) ws.close();
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/terminal` + (sid ? `?session=${encodeURIComponent(sid)}` : ""));
+    document.getElementById("term-status").textContent = "connecting…";
+    ws.onopen = () => { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); };
+    ws.onmessage = (e) => {
+      const raw = e.data;
+      try {
+        const m = JSON.parse(raw);
+        if (m.type === "session" && m.id) { currentSID = m.id; document.getElementById("term-status").textContent = "session " + m.id.slice(0, 8); refreshSessions(); return; }
+        if (m.type === "pty-exit") { document.getElementById("term-status").textContent = "session ended (exit " + (m.exitCode ?? "?") + ")"; refreshSessions(); return; }
+      } catch { /* terminal data */ }
+      term.write(raw);
+    };
+    ws.onclose = () => { document.getElementById("term-status").textContent = "disconnected"; refreshSessions(); };
+  }
 
   term.onData((d) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "input", data: d })));
   window.addEventListener("resize", () => fit.fit());
   term.onResize(({ cols, rows }) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "resize", cols, rows })));
 
-  function showExitOverlay(exitCode) {
-    if (overlayShown) return;
-    overlayShown = true;
-    const overlay = document.createElement("div");
-    overlay.className = "pty-overlay";
-    overlay.innerHTML = `
-      <h3>Session ended</h3>
-      <div class="exit-code">Exit code: ${exitCode}</div>
-      <button id="pty-restart">Restart</button>`;
-    container.appendChild(overlay);
-    overlay.querySelector("#pty-restart").onclick = async () => {
-      overlay.remove();
-      overlayShown = false;
-      await postJson("/api/session/restart");
-    };
-  }
+  document.getElementById("new-sess").onclick = () => attach("");
+  document.getElementById("kill-sess").onclick = async () => {
+    if (!currentSID) return;
+    await fetch(`/api/sessions/${encodeURIComponent(currentSID)}`, { method: "DELETE" });
+    currentSID = null; term.reset(); attach(""); refreshSessions();
+  };
 
-  function showDisconnectOverlay() {
-    overlayShown = true;
-    const overlay = document.createElement("div");
-    overlay.className = "pty-overlay";
-    overlay.innerHTML = `
-      <h3>Disconnected</h3>
-      <div class="exit-code">The terminal connection was lost.</div>
-      <button id="pty-reconnect">Reconnect</button>`;
-    container.appendChild(overlay);
-    overlay.querySelector("#pty-reconnect").onclick = () => {
-      overlay.remove();
-      overlayShown = false;
-      connect();
-    };
-  }
+  // Attach the most-recent session if any, else start a new one.
+  (async () => {
+    await refreshSessions();
+    const alive = sessions.find((s) => s.alive);
+    attach(alive ? alive.id : (sessions[0]?.id || ""));
+  })();
 }

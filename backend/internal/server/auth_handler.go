@@ -119,6 +119,22 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// handleMe returns the authenticated user's identity + must-change-pw flag.
+// The frontend's boot() calls this to decide login vs. change-password vs. app.
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	id, _ := IdentityFrom(r.Context())
+	u, err := s.db.GetUserByUsername(id.Username)
+	if err != nil {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"username":           u.Username,
+		"role":               u.Role,
+		"mustChangePassword": u.MustChangePassword,
+	})
+}
+
 // authedIdentity verifies the session cookie and returns the Identity it
 // represents. Used by routes (e.g. WebSocket handlers) that check auth inline
 // rather than going through authMiddleware.
