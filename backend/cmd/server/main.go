@@ -9,7 +9,10 @@ import (
 
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
+	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/secrets"
 	"github.com/ldm0206/claude-docker/backend/internal/server"
+	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
 )
@@ -38,7 +41,21 @@ func main() {
 	if err := store.BootstrapAdmin(db, cfg.BootstrapAdminUser, cfg.BootstrapAdminPassword, auth.HashPassword); err != nil {
 		log.Fatalf("[server] bootstrap admin: %v", err)
 	}
-	srv := server.New(cfg, db, system.DefaultProvisioner)
+	// PTY factory: each sessions.Manager.Create call builds a fresh *pty.Manager.
+	// The real creack/pty + gosu runtime is Linux-only; on Windows the factory
+	// is still constructed (it is not invoked until a session is created, which
+	// only happens via /ws/terminal — never hit by Windows `go test`).
+	factory := func(o pty.Options) sessions.PTY { return pty.New(o) }
+	sess := sessions.NewManager(db, factory)
+	// Load MASTER_KEY for AES-256-GCM sealing of credential presets. If unset,
+	// masterKey is nil and the credential endpoints return 500. T9 may harden
+	// this to a fatal startup error; for now we log and continue so the rest of
+	// the server works without credentials configured.
+	masterKey, merr := secrets.MasterKey(envLookup)
+	if merr != nil {
+		log.Printf("[server] warning: MASTER_KEY not configured — credential endpoints disabled (%v)", merr)
+	}
+	srv := server.New(cfg, db, system.DefaultProvisioner, sess, masterKey)
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {
 		log.Fatalf("[server] %v", err)

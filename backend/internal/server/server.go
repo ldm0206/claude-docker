@@ -2,101 +2,185 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
-	"sync"
-	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/secrets"
+	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
 	"github.com/ldm0206/claude-docker/backend/internal/ui"
 )
 
-// currentUser holds the identity the shared PTY currently runs as. Plan 2 keeps
-// a SINGLE shared terminal (multi-session is Plan 3), so we swap this on login
-// and the next lazy Start() / restart picks up the new user. The env factory
-// reads these fields under userMu so BuildUserEnv always sees a consistent
-// (username, uid, claudeConfigDir) tuple.
-type currentUser struct {
-	username        string
-	uid             int
-	claudeConfigDir string
-}
-
+// Server is the HTTP backend. Plan 3 replaced Plan 2's single shared PTY
+// (currentUser + *pty.Manager) with a per-user, multi-session pool owned by
+// *sessions.Manager. Sessions are created lazily from /ws/terminal when the
+// client omits ?session=<id>, and attached by id when it supplies one.
 type Server struct {
 	cfg         *config.Config
 	db          *store.DB
-	restarting  atomic.Bool
-	pty         *pty.Manager
 	provisioner system.AccountProvisioner
+	masterKey   []byte
 
-	userMu sync.RWMutex
-	user   currentUser
+	// sess owns the live PTY pool keyed by username → sessionID. main.go
+	// constructs it with the real PTY factory; tests inject a fake.
+	sess *sessions.Manager
 }
 
-// New builds a Server wired to the given config, user store, and account
-// provisioner. The store remains owned by the caller (main.go opens/closes it);
-// New only retains it.
+// New wires a Server to the given config, user store, provisioner, session
+// manager, and credential master key. The db and sess remain owned by the
+// caller (main.go opens/closes them); New only retains them. masterKey is the
+// 32-byte AES-256-GCM key used to seal credential presets; it may be nil in
+// which case the credential endpoints return 500 (T9 wires the real key).
+func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, masterKey []byte) *Server {
+	if sess == nil {
+		panic("server: New sess must not be nil")
+	}
+	return &Server{cfg: cfg, db: db, provisioner: provisioner, sess: sess, masterKey: masterKey}
+}
+
+// buildUserEnvFactory returns an EnvFactory that resolves the per-user env
+// slice lazily at PTY spawn time. It decrypts the user's bound credential
+// preset (if any) and passes the non-empty secret fields as credEnv, which
+// BuildUserEnv applies LAST so they override any inherited/cfg value. Returning
+// a function (not a precomputed slice) lets credential rotation take effect on
+// the next Create without restarting the server.
 //
-// The shared PTY's Env factory is LAZY: it reads the current user under
-// userMu on every call, so a login that swaps the user (setCurrentUser) is
-// observed by the next Start(). Until anyone logs in, the terminal runs as the
-// root admin with BuildClaudeEnv (same behavior as pre-Fix-2). Once a user
-// logs in, setCurrentUser populates username/uid/claudeConfigDir and the env
-// factory switches to BuildUserEnv, driving gosu via Options.Username.
-func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner) *Server {
-	s := &Server{cfg: cfg, db: db, provisioner: provisioner}
-	p := pty.New(pty.Options{
-		Cwd:     "/workspace",
-		Env:     s.buildPTYEnv,
-		Command: "bash",
-	})
-	s.pty = p
-	return s
-}
-
-// buildPTYEnv is the lazy env factory for the shared PTY. It reads the
-// current user under userMu and builds either BuildUserEnv (a user is set)
-// or BuildClaudeEnv (no user yet → root admin's terminal). credEnv is nil
-// for now — Plan 3 fills per-user credentials here.
-func (s *Server) buildPTYEnv() []string {
-	u, ok := s.currentUser()
-	if !ok {
-		return pty.BuildClaudeEnv(s.cfg)
+// SECURITY: the decrypted credential lives ONLY in the returned []string (which
+// becomes exec.Cmd.Env). It is never logged, never persisted, never returned.
+// Decryption failures (corrupt blob, rotated MASTER_KEY) are logged at WARNING
+// level and treated as "no credential" — the session still starts, just without
+// the injected env. Failing the session over a corrupt credential would lock a
+// user out of their only path to recovery.
+func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
+	return func(_ string) []string {
+		credEnv := s.resolveCredEnv(u)
+		return pty.BuildUserEnv(s.cfg, u.Username, "/data/"+u.Username+"/claude-config", credEnv)
 	}
-	return pty.BuildUserEnv(s.cfg, u.username, u.claudeConfigDir, nil)
 }
 
-// setCurrentUser records the identity the shared PTY should run as. Called on
-// successful login (auth_handler) and from the terminal WS handler before the
-// lazy Start(). The NEXT Start() spawns `gosu <username> bash -l` with
-// BuildUserEnv-constructed env. An already-alive PTY keeps running as the
-// previous user until the operator or frontend restarts the session.
-// (Acceptable for Plan 2's single shared PTY; Plan 3 adds per-session PTYs.)
-// Mutating the username is idempotent: a no-op if the same user logs in again.
-func (s *Server) setCurrentUser(username string, uid int, claudeConfigDir string) {
-	s.userMu.Lock()
-	s.user = currentUser{username: username, uid: uid, claudeConfigDir: claudeConfigDir}
-	s.userMu.Unlock()
-	// Mirror into the PTY manager so Start()'s gosu branch fires for the
-	// new user. Only the next Start() observes this; a live PTY is unaffected.
-	s.pty.SetUsername(username)
-}
-
-// currentUser returns the live identity and ok=true if a user is set, or
-// ok=false if no user has logged in yet (root admin fallback). Callers read
-// the returned struct by value; the lock is released before the value is
-// returned, so a concurrent setCurrentUser may swap the underlying field —
-// but each call here reflects a consistent prior state.
-func (s *Server) currentUser() (currentUser, bool) {
-	s.userMu.RLock()
-	defer s.userMu.RUnlock()
-	if s.user.username == "" {
-		return currentUser{}, false
+// resolveCredEnv decrypts the user's bound credential preset and returns it as
+// the credEnv map BuildUserEnv consumes. Returns nil (and logs) when there is
+// no bound preset, no masterKey, or the blob is corrupt/undecryptable. The
+// returned map carries ONLY the non-empty fields, keyed the same way
+// BuildClaudeEnv/BuildUserEnv key them (ANTHROPIC_*, plus the proxy pairs in
+// BOTH upper and lower case — matching the convention tools like curl/claude
+// expect).
+//
+// This is the ONLY place in the codebase where a sealed preset is opened; it is
+// deliberately not exposed via any HTTP endpoint.
+func (s *Server) resolveCredEnv(u store.User) map[string]string {
+	if !u.CredentialPresetID.Valid {
+		return nil
 	}
-	return s.user, true
+	if s.masterKey == nil {
+		// T9 wires the real key; until then bound presets simply have no effect.
+		// Not an error — the session still works, just without injected creds.
+		return nil
+	}
+	preset, err := s.db.GetPreset(int(u.CredentialPresetID.Int64))
+	if err != nil {
+		// Preset was deleted after binding (rare but possible). Log and proceed
+		// without credentials rather than failing the session.
+		log.Printf("[server] warning: credential preset %d for user %s not found: %v",
+			u.CredentialPresetID.Int64, u.Username, err)
+		return nil
+	}
+	var creds credentialSecretFields
+	if err := secrets.OpenJSON(s.masterKey, preset.EncryptedBlob, &creds); err != nil {
+		// Corrupt blob or rotated MASTER_KEY. DO NOT fail the session — log and
+		// fall back to no injected credentials (cfg/inherited env still apply).
+		log.Printf("[server] warning: failed to decrypt credential preset %d for user %s: %v",
+			u.CredentialPresetID.Int64, u.Username, err)
+		return nil
+	}
+	return credEnvFromSecrets(creds)
+}
+
+// credEnvFromSecrets translates the decrypted secret struct into the env map
+// BuildUserEnv consumes. Empty fields are omitted (so an inherited/cfg value is
+// left untouched rather than blanked). Proxies are emitted in BOTH cases to
+// match the BuildClaudeEnv convention.
+func credEnvFromSecrets(c credentialSecretFields) map[string]string {
+	env := make(map[string]string, 8)
+	if c.APIKey != "" {
+		env["ANTHROPIC_API_KEY"] = c.APIKey
+	}
+	if c.AuthToken != "" {
+		env["ANTHROPIC_AUTH_TOKEN"] = c.AuthToken
+	}
+	if c.BaseURL != "" {
+		env["ANTHROPIC_BASE_URL"] = c.BaseURL
+	}
+	for _, p := range []struct{ hi, lo, val string }{
+		{"HTTP_PROXY", "http_proxy", c.HTTPProxy},
+		{"HTTPS_PROXY", "https_proxy", c.HTTPSProxy},
+		{"ALL_PROXY", "all_proxy", c.AllProxy},
+	} {
+		if p.val != "" {
+			env[p.hi] = p.val
+			env[p.lo] = p.val
+		}
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
+// ensureSession is the core of /ws/terminal: given a live user and an optional
+// session id, it returns the PTY the WS handler should drive, the effective
+// session id (newly-minted on the create path), and an HTTP status (200 / 404
+// for an unknown explicit id / 409 when the per-user cap is reached).
+//
+// On the create path it lazy-starts the PTY BEFORE returning so the caller can
+// subscribe OnData without missing the first emitted bytes. On the attach path
+// it lazy-restarts a dead PTY (process exited between reconnects).
+//
+// The WS handler is intentionally thin: this method is unit-testable without a
+// real WebSocket dial (see server_test.go's ensureSession tests).
+func (s *Server) ensureSession(u store.User, sid string) (sessions.PTY, string, int) {
+	if sid != "" {
+		// Attach to an explicit session. Unknown id → 404 (the client asked for
+		// a specific one; silently creating a new one would be surprising).
+		p, ok := s.sess.Get(u.Username, sid)
+		if !ok {
+			return nil, "", http.StatusNotFound
+		}
+		if !p.Alive() {
+			// Lazy restart: process exited while the WS was disconnected.
+			if err := p.Start(); err != nil {
+				return nil, sid, http.StatusInternalServerError
+			}
+		}
+		return p, sid, http.StatusOK
+	}
+
+	// Create path: spin up a fresh session for this user.
+	envFactory := s.buildUserEnvFactory(u)
+	opts := pty.Options{
+		Command:  "bash",
+		Cols:     80,
+		Rows:     24,
+		Username: u.Username,
+	}
+	newSID, p, err := s.sess.Create(u.Username, u.ID, "/home/"+u.Username+"/workspace", envFactory, opts)
+	if err != nil {
+		if errors.Is(err, sessions.ErrSessionCapReached) {
+			return nil, "", http.StatusConflict
+		}
+		return nil, "", http.StatusInternalServerError
+	}
+	// Lazy-start BEFORE the caller subscribes OnData so the first bytes emitted
+	// by the shell are not lost (matches the pre-Plan-3 single-PTY behavior).
+	if err := p.Start(); err != nil {
+		return nil, "", http.StatusInternalServerError
+	}
+	return p, newSID, http.StatusOK
 }
 
 // authWSUser is the WebSocket auth gate. WS routes are NOT under authMiddleware
@@ -124,8 +208,6 @@ func (s *Server) authWSUser(r *http.Request) (store.User, bool) {
 	return u, true
 }
 
-func (s *Server) PTY() *pty.Manager { return s.pty }
-
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", s.handleHealth)
@@ -138,11 +220,18 @@ func (s *Server) Routes() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Get("/api/state", s.handleState)
-		r.Post("/api/session/restart", s.handleRestart)
+		// NOTE: the old global POST /api/session/restart was REMOVED in Plan 3
+		// (per-session kill+create via DELETE /api/sessions/:id lands in T6).
+		// The SPA's restart button 404s for now — fine, the SPA is not the
+		// Plan 3 test target.
 		r.Post("/auth/change-password", s.handleChangePassword)
 		r.Post("/api/capture/enable", s.handleCaptureEnable)
 		r.Post("/api/capture/disable", s.handleCaptureDisable)
 		r.Post("/api/captures/clear", s.handleCapturesClear)
+		// User session-management endpoints (T6)
+		r.Post("/api/sessions", s.handleCreateSession)
+		r.Get("/api/sessions", s.handleListSessions)
+		r.Delete("/api/sessions/{id}", s.handleDeleteSession)
 		// Admin user-management routes
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
@@ -151,6 +240,20 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/api/admin/users/{id}", s.handleAdminDeleteUser)
 			r.Post("/api/admin/users/{id}/suspend", s.handleAdminSuspendUser)
 			r.Post("/api/admin/users/{id}/unsuspend", s.handleAdminUnsuspendUser)
+			// Admin session-management endpoints (T6)
+			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
+			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
+			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
+			// Admin role-template CRUD (T7)
+			r.Get("/api/admin/templates", s.handleAdminListTemplates)
+			r.Post("/api/admin/templates", s.handleAdminCreateTemplate)
+			r.Patch("/api/admin/templates/{id}", s.handleAdminUpdateTemplate)
+			r.Delete("/api/admin/templates/{id}", s.handleAdminDeleteTemplate)
+			// Admin credential-preset CRUD (T7) — secrets are sealed with masterKey
+			r.Get("/api/admin/credentials", s.handleAdminListCredentials)
+			r.Post("/api/admin/credentials", s.handleAdminCreateCredential)
+			r.Patch("/api/admin/credentials/{id}", s.handleAdminUpdateCredential)
+			r.Delete("/api/admin/credentials/{id}", s.handleAdminDeleteCredential)
 		})
 	})
 	r.Handle("/*", ui.SPA())
@@ -166,21 +269,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// handleState returns the minimal client-facing state. Plan 3 dropped
+// `sessionAlive` (it referred to the now-removed shared PTY); per-user session
+// liveness is exposed via /api/sessions in T6. captureOn stays false until the
+// real MITM capture lands in Plan 5.
 func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"captureOn": false, "sessionAlive": s.pty.Alive()})
-}
-
-// handleRestart kills and re-spawns the shared PTY (frontend calls this from
-// the "Session ended → Restart" button).
-func (s *Server) handleRestart(w http.ResponseWriter, _ *http.Request) {
-	s.restarting.Store(true)
-	defer s.restarting.Store(false)
-	s.pty.Stop()
-	if err := s.pty.Start(); err != nil {
-		writeJSON(w, 500, map[string]any{"error": "restart failed"})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"captureOn": false})
 }
 
 // Capture is inert in Plan 1 (real MITM arrives in Plan 5). These stubs keep

@@ -42,8 +42,9 @@ func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
 			"mem":       mem,
 			"net":       map[string]any{"rxBytes": rx, "txBytes": tx},
 			"captureOn": false,
-			"alive":     s.pty.Alive(),
-			"ts":        time.Now().UnixMilli(),
+			// "alive" referred to the shared PTY (Plan 2); it is gone in Plan 3.
+			// Per-session liveness is exposed via /api/sessions (T6).
+			"ts": time.Now().UnixMilli(),
 		}
 		if err := c.Write(ctx, websocket.MessageText, mustJSON(snap)); err != nil {
 			return

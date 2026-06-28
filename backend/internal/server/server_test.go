@@ -5,10 +5,14 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
+	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
 )
@@ -23,9 +27,96 @@ func mustUID(t *testing.T, db *store.DB) int {
 	return uid
 }
 
+// fakePTY is a Windows-friendly stand-in for *pty.Manager. It records Start/Stop
+// calls and supports the OnData/OnExit callback contract the WS handler relies
+// on. It does NOT spawn any process — that's the point (Plan 3 defers real
+// creack/pty + gosu to Linux runtime; the wiring logic is unit-testable here).
+//
+// resolvedEnv captures the env slice the PTY would have been spawned with. The
+// sessions.Manager wraps the EnvFactory in opts.Env (a func() []string); the
+// fake invokes it once at construction time (matching how the real Manager's
+// Start() calls opts.Env()) so tests can assert on the credential injection
+// (T8). It is NOT the raw func — it is the materialized []string.
+type fakePTY struct {
+	opts        pty.Options
+	resolvedEnv []string
+	startCnt    int32
+	stopCnt     int32
+	mu          sync.Mutex
+	alive       bool
+	dataCbs     []func([]byte)
+	exitCbs      []func(int)
+}
+
+func (f *fakePTY) Start() error {
+	atomic.AddInt32(&f.startCnt, 1)
+	f.mu.Lock()
+	f.alive = true
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakePTY) Stop() {
+	atomic.AddInt32(&f.stopCnt, 1)
+	f.mu.Lock()
+	f.alive = false
+	f.mu.Unlock()
+}
+func (f *fakePTY) Write(b []byte) error          { return nil }
+func (f *fakePTY) Resize(cols, rows uint16) error { return nil }
+func (f *fakePTY) Alive() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.alive
+}
+func (f *fakePTY) OnData(cb func([]byte)) func() {
+	f.mu.Lock()
+	f.dataCbs = append(f.dataCbs, cb)
+	f.mu.Unlock()
+	return func() {}
+}
+func (f *fakePTY) OnExit(cb func(int)) func() {
+	f.mu.Lock()
+	f.exitCbs = append(f.exitCbs, cb)
+	f.mu.Unlock()
+	return func() {}
+}
+
+// newFakePTYFactory returns a PTYFactory that records every PTY it builds so
+// tests can assert on Start/Stop counts. Each built fake materializes opts.Env
+// (the func() []string set by sessions.Manager) exactly once at construction,
+// mirroring how the real *pty.Manager consumes cmd.Env in Start(). This lets T8
+// tests inspect the decrypted credential env without a Linux PTY.
+func newFakePTYFactory() (sessions.PTYFactory, func() []*fakePTY) {
+	var mu sync.Mutex
+	var created []*fakePTY
+	factory := func(opts pty.Options) sessions.PTY {
+		f := &fakePTY{opts: opts}
+		if opts.Env != nil {
+			f.resolvedEnv = opts.Env()
+		}
+		mu.Lock()
+		created = append(created, f)
+		mu.Unlock()
+		return f
+	}
+	return factory, func() []*fakePTY {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]*fakePTY(nil), created...)
+	}
+}
+
+// testServer bundles a Server with the fake PTY factory's snapshotter, so
+// tests can assert on how many PTYs were created (create-vs-attach behavior).
+type testServer struct {
+	*Server
+	createdPTYs func() []*fakePTY
+}
+
 // newTestServer builds a Server backed by a temp-file store with one user
-// "alice" / "pw123" (role "user"). The store is closed via t.Cleanup.
-func newTestServer(t *testing.T) *Server {
+// "alice" / "pw123" (role "user") and a sessions.Manager wired to a fake PTY
+// factory. The store is closed via t.Cleanup.
+func newTestServer(t *testing.T) *testServer {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -42,7 +133,10 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("create user: %v", err)
 	}
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
-	return New(cfg, db, system.DefaultProvisioner)
+	factory, created := newFakePTYFactory()
+	mgr := sessions.NewManager(db, factory)
+	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil)
+	return &testServer{Server: srv, createdPTYs: created}
 }
 
 func TestHealth(t *testing.T) {
@@ -101,7 +195,7 @@ func TestLoginSuccessSetsCookieAndRole(t *testing.T) {
 }
 
 // loginAsAlice performs a login and returns the session cookie value.
-func loginAsAlice(t *testing.T, s *Server) string {
+func loginAsAlice(t *testing.T, s *testServer) string {
 	t.Helper()
 	req := httptest.NewRequest("POST", "/auth", strings.NewReader(`{"username":"alice","password":"pw123"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -129,7 +223,10 @@ func TestStateRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestStateWithCookieOK(t *testing.T) {
+// TestStateDropsSessionAlive verifies /api/state returns {captureOn:false} and
+// NO sessionAlive key (the shared PTY is gone; per-user liveness is via
+// /api/sessions in T6).
+func TestStateDropsSessionAlive(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/state", nil)
 	req.AddCookie(&http.Cookie{Name: "session", Value: loginAsAlice(t, s)})
@@ -137,6 +234,13 @@ func TestStateWithCookieOK(t *testing.T) {
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"captureOn":false`) {
+		t.Fatalf("body missing captureOn:false: %s", body)
+	}
+	if strings.Contains(body, "sessionAlive") {
+		t.Fatalf("body must NOT contain sessionAlive: %s", body)
 	}
 }
 
@@ -153,7 +257,6 @@ func TestChangePasswordRequiresAuth(t *testing.T) {
 
 func TestChangePasswordRehashesAndClearsFlag(t *testing.T) {
 	s := newTestServer(t)
-	// Force the must-change flag on so we can verify it clears.
 	u, err := s.db.GetUserByUsername("alice")
 	if err != nil {
 		t.Fatalf("get user: %v", err)
@@ -168,7 +271,6 @@ func TestChangePasswordRehashesAndClearsFlag(t *testing.T) {
 		t.Fatalf("expected 200, got %d; body=%s", w.Code, w.Body.String())
 	}
 
-	// The hash must have changed and the new password must verify.
 	updated, err := s.db.GetUserByID(u.ID)
 	if err != nil {
 		t.Fatalf("get updated: %v", err)
@@ -183,3 +285,173 @@ func TestChangePasswordRehashesAndClearsFlag(t *testing.T) {
 		t.Fatal("must_change_password flag should be cleared")
 	}
 }
+
+// TestRestartRouteRemoved verifies the old global /api/session/restart handler
+// is GONE (per-session kill+create replaces it in T6). The chi router has no
+// matching route, so the request falls through to the SPA catch-all which
+// serves index.html (status 200, HTML body). We assert the response is NOT the
+// old handler's `{ok:true}` JSON — proving the restart handler no longer runs.
+func TestRestartRouteRemoved(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/session/restart", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: loginAsAlice(t, s)})
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	body := w.Body.String()
+	if strings.Contains(body, `"ok":true`) {
+		t.Fatalf("restart handler still active; body=%s", body)
+	}
+	// Content-Type must NOT be application/json (the old handler set it).
+	ct := w.Header().Get("Content-Type")
+	if strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("restart handler still setting JSON Content-Type: %s; body=%s", ct, body)
+	}
+}
+
+// TestEnsureSessionCreatesWhenAbsent drives the extracted helper that the WS
+// handler delegates to. With sid=="" it must CREATE a session, lazy-start it,
+// and return the new id + status 200. This is the unit-test stand-in for the
+// WS create path (no real WebSocket dial needed).
+func TestEnsureSessionCreatesWhenAbsent(t *testing.T) {
+	s := newTestServer(t)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+
+	p, sid, status := s.ensureSession(alice, "")
+	if status != 200 {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if sid == "" {
+		t.Fatal("sid empty for create path")
+	}
+	if p == nil {
+		t.Fatal("pty nil for create path")
+	}
+	// Create lazy-starts the PTY (WS handler does this before subscribing).
+	fp := p.(*fakePTY)
+	if atomic.LoadInt32(&fp.startCnt) != 1 {
+		t.Fatalf("Start called %d times, want 1", atomic.LoadInt32(&fp.startCnt))
+	}
+	// The new id must be retrievable via the manager.
+	if got, ok := s.sess.Get("alice", sid); !ok || got != p {
+		t.Fatalf("manager.Get returned ok=%v, mismatched PTY", ok)
+	}
+}
+
+// TestEnsureSessionAttachesExisting verifies sid != "" reuses the existing PTY
+// rather than creating a new one.
+func TestEnsureSessionAttachesExisting(t *testing.T) {
+	s := newTestServer(t)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+
+	// Seed one session.
+	_, sid0, _ := s.ensureSession(alice, "")
+	created := s.createdPTYs()
+	if len(created) != 1 {
+		t.Fatalf("expected 1 PTY after create, got %d", len(created))
+	}
+
+	// Attach to sid0 — must NOT create a second PTY.
+	p2, sid2, status := s.ensureSession(alice, sid0)
+	if status != 200 {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if sid2 != sid0 {
+		t.Fatalf("sid changed: %q vs %q", sid2, sid0)
+	}
+	if len(s.createdPTYs()) != 1 {
+		t.Fatalf("attach must not create a new PTY; total=%d", len(s.createdPTYs()))
+	}
+	if p2 != created[0] {
+		t.Fatal("attach returned a different PTY than the seeded one")
+	}
+}
+
+// TestEnsureSessionUnknownSIDReturns404 verifies an explicit-but-unknown sid
+// yields 404 (NOT a create — the client asked for a specific session).
+func TestEnsureSessionUnknownSIDReturns404(t *testing.T) {
+	s := newTestServer(t)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+	_, _, status := s.ensureSession(alice, "does-not-exist")
+	if status != 404 {
+		t.Fatalf("status = %d, want 404", status)
+	}
+}
+
+// TestEnsureSessionCapReachedReturns409 sets max_sessions=0 then 1, creates
+// one, and verifies the next create yields 409.
+func TestEnsureSessionCapReachedReturns409(t *testing.T) {
+	s := newTestServer(t)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+	if err := s.db.SetUserMaxSessions(alice.ID, 1); err != nil {
+		t.Fatalf("set max sessions: %v", err)
+	}
+	if _, _, st := s.ensureSession(alice, ""); st != 200 {
+		t.Fatalf("1st create status=%d, want 200", st)
+	}
+	_, _, status := s.ensureSession(alice, "")
+	if status != 409 {
+		t.Fatalf("cap-reached status = %d, want 409", status)
+	}
+}
+
+// TestEnsureSessionStartsDeadPTY verifies the lazy-start: if a PTY exists but
+// is NOT alive, ensureSession re-starts it.
+func TestEnsureSessionStartsDeadPTY(t *testing.T) {
+	s := newTestServer(t)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+	p, sid, _ := s.ensureSession(alice, "")
+	fp := p.(*fakePTY)
+	if atomic.LoadInt32(&fp.startCnt) != 1 {
+		t.Fatalf("Start called %d, want 1", atomic.LoadInt32(&fp.startCnt))
+	}
+	// Kill the underlying process (simulating a natural exit / earlier kill).
+	fp.Stop()
+	if p.Alive() {
+		t.Fatal("pty should be dead after Stop")
+	}
+	// ensureSession on the same id must lazy-restart.
+	if _, _, st := s.ensureSession(alice, sid); st != 200 {
+		t.Fatalf("re-attach status=%d, want 200", st)
+	}
+	if atomic.LoadInt32(&fp.startCnt) != 2 {
+		t.Fatalf("Start called %d, want 2 (lazy restart)", atomic.LoadInt32(&fp.startCnt))
+	}
+}
+
+// TestAuthWSUserRejectsSuspended re-confirms the WS auth gate survives the
+// rewrite (a stale-but-valid cookie on a suspended user must NOT pass).
+func TestAuthWSUserRejectsSuspended(t *testing.T) {
+	s := newTestServer(t)
+	cookie := loginAsAlice(t, s)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+	if err := s.db.SetSuspended(alice.ID, true); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	req := httptest.NewRequest("GET", "/ws/terminal", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: cookie})
+	if _, ok := s.authWSUser(req); ok {
+		t.Fatal("authWSUser allowed a suspended user")
+	}
+}
+
+// Compile-time guard: fakePTY must satisfy sessions.PTY so the injected
+// factory stays valid if the interface drifts.
+var _ sessions.PTY = (*fakePTY)(nil)
