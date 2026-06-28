@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
+	"github.com/ldm0206/claude-docker/backend/internal/capture"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
 	"github.com/ldm0206/claude-docker/backend/internal/quota"
@@ -77,7 +79,22 @@ func main() {
 	}
 	sshSrv := sshserver.New(db, ":"+sftpPort)
 
-	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, masterKey, qsvc, tsvc, nil)
+	// --- Capture: admin-only, per-session MITM (Linux runtime). The real
+	// MITMRunner is built from the CA the entrypoint generates + installs into
+	// the trust store; the proxy starts LAZILY on the first admin enable
+	// (capture.Enable), not at boot. The Response hook (session resolution +
+	// redaction + store.Add) is Linux-runtime; see capture/service_linux.go.
+	// -- platform-aware runner construction via build-tagged NewMITMRunner --
+	capPort := 8888
+	if v, err := strconv.Atoi(os.Getenv("CLAUDE_DEBUG_PROXY_PORT")); err == nil && v > 0 {
+		capPort = v
+	}
+	caRoot := os.Getenv("CLAUDE_DEBUG_SSL_CA_DIR")
+	capStore := capture.NewStore()
+	capRunner := capture.NewMITMRunner(caRoot, nil, capStore, db, masterKey)
+	capSvc := capture.NewService(capRunner, capStore, db, masterKey, capPort)
+
+	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, masterKey, qsvc, tsvc, capSvc)
 
 	// Background loops.
 	ctx, cancel := context.WithCancel(context.Background())
