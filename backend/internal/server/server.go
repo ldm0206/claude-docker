@@ -313,16 +313,11 @@ func (s *Server) Routes() http.Handler {
 		// The SPA's restart button 404s for now — fine, the SPA is not the
 		// Plan 3 test target.
 		r.Post("/auth/change-password", s.handleChangePassword)
-		// /api/captures/clear + /ws/captures are the public/WS capture surfaces
-		// (T4 implements the real list/clear/WS). The old global capture
-		// enable/disable stubs were REMOVED in P5-T3 — capture is now
-		// admin-only + per-session, see /api/admin/sessions/:id/capture/*.
-		r.Post("/api/captures/clear", s.handleCapturesClear)
 		// User session-management endpoints (T6)
 		r.Post("/api/sessions", s.handleCreateSession)
 		r.Get("/api/sessions", s.handleListSessions)
 		r.Delete("/api/sessions/{id}", s.handleDeleteSession)
-		// Admin user-management routes
+		// Admin group
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Post("/api/admin/users", s.handleAdminCreateUser)
@@ -342,6 +337,10 @@ func (s *Server) Routes() http.Handler {
 			// MITM proxy + restarts the session PTY so its env routes through it.
 			r.Post("/api/admin/sessions/{id}/capture/enable", s.handleAdminCaptureEnable)
 			r.Post("/api/admin/sessions/{id}/capture/disable", s.handleAdminCaptureDisable)
+			// Admin captures read/clear surface (P5-T4). The /ws/captures push
+			// is mounted top-level (WS handlers auth inline, see handleCapturesWS).
+			r.Get("/api/admin/captures", s.handleAdminListCaptures)
+			r.Post("/api/admin/captures/clear", s.handleAdminClearCaptures)
 			// Admin role-template CRUD (T7)
 			r.Get("/api/admin/templates", s.handleAdminListTemplates)
 			r.Post("/api/admin/templates", s.handleAdminCreateTemplate)
@@ -369,16 +368,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 
 // handleState returns the minimal client-facing state. Plan 3 dropped
 // `sessionAlive` (it referred to the now-removed shared PTY); per-user session
-// liveness is exposed via /api/sessions. captureOn stays false until the real
-// MITM capture lands in Plan 5.
+// liveness is exposed via /api/sessions. captureOn reflects whether the admin
+// has enabled capture on the requesting user's session (if any), else false.
 func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"captureOn": false})
-}
-
-// handleCapturesClear is an inert stub retained for the Plan 5 capture surface.
-// T4 implements the real clear/list/WS over the capture store + Service.
-func (s *Server) handleCapturesClear(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 // authMiddleware guards the authed route group. It verifies the session cookie,

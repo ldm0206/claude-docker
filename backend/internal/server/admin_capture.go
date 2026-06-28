@@ -1,10 +1,12 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ldm0206/claude-docker/backend/internal/capture"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 )
 
@@ -122,4 +124,109 @@ func (s *Server) handleAdminCaptureDisable(w http.ResponseWriter, r *http.Reques
 	// is fine — the next WS attach will spawn without the proxy env.
 	_ = s.sess.Restart(user.Username, sid)
 	writeJSON(w, 200, map[string]any{"captureOn": false})
+}
+
+// ---------------------------------------------------------------------------
+// P5-T4: admin capture list/clear + the /ws/captures push
+// ---------------------------------------------------------------------------
+
+// captureOut is the JSON shape sent to the admin Captures panel. Map fields
+// are nullable so an empty header map renders as null rather than {} (the SPA
+// treats absence either way).
+type captureOut struct {
+	SessionID  string            `json:"sessionID"`
+	Method     string            `json:"method"`
+	Host       string            `json:"host"`
+	Path       string            `json:"path"`
+	Status     int               `json:"status"`
+	LatencyMs  int64             `json:"latencyMs"`
+	Ts         int64             `json:"ts"`
+	ReqHeaders map[string]string `json:"reqHeaders"`
+	ResHeaders map[string]string `json:"resHeaders"`
+	ReqBody    string            `json:"reqBody"`
+	ResBody    string            `json:"resBody"`
+}
+
+func captureToOut(r capture.Record) captureOut {
+	return captureOut{
+		SessionID:  r.SessionID,
+		Method:     r.Method,
+		Host:       r.Host,
+		Path:       r.Path,
+		Status:     r.Status,
+		LatencyMs:  r.LatencyMs,
+		Ts:         r.Ts,
+		ReqHeaders: r.ReqHeaders,
+		ResHeaders: r.ResHeaders,
+		ReqBody:    r.ReqBody,
+		ResBody:    r.ResBody,
+	}
+}
+
+// handleAdminListCaptures returns the (already-redacted) captured records,
+// optionally filtered by ?session=<id>. capture==nil → empty list.
+func (s *Server) handleAdminListCaptures(w http.ResponseWriter, r *http.Request) {
+	session := r.URL.Query().Get("session")
+	var recs []capture.Record
+	if s.capture != nil {
+		recs = s.capture.Store().List(session)
+	}
+	out := make([]captureOut, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, captureToOut(rec))
+	}
+	writeJSON(w, 200, out)
+}
+
+// handleAdminClearCaptures empties the in-memory capture store.
+func (s *Server) handleAdminClearCaptures(w http.ResponseWriter, _ *http.Request) {
+	if s.capture != nil {
+		s.capture.Store().Clear()
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// marshalCapturesList serializes the current list as a JSON array for the WS
+// initial push. Extracted so the WS path can be unit-tested without a real
+// WS dial (call this, assert the bytes).
+func marshalCapturesList(st *capture.Store, session string) []byte {
+	recs := st.List(session)
+	out := make([]captureOut, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, captureToOut(rec))
+	}
+	b, _ := json.Marshal(out)
+	return b
+}
+
+// captureFanout drives the /ws/captures push: on connect it sends the current
+// list, then subscribes to the store and pushes each new record as a JSON
+// object. Returns the push function (for unit-testability) — callers wire it
+// to a real WS in handleCapturesWS. When capture is nil, the fanout is a no-op
+// (the list is empty and Subscribe is never called).
+func (s *Server) captureFanout(write func([]byte) bool, done <-chan struct{}, session string) {
+	var st *capture.Store
+	if s.capture != nil {
+		st = s.capture.Store()
+	}
+	if st == nil {
+		_ = write([]byte("[]"))
+		return
+	}
+	// Initial list.
+	if !write(marshalCapturesList(st, session)) {
+		return
+	}
+	// Push new records until the caller signals done.
+	unsub := st.Subscribe(func(r capture.Record) {
+		_ = write(marshalCaptureRecord(r))
+	})
+	defer unsub()
+	<-done
+}
+
+// marshalCaptureRecord serializes one record for the incremental WS push.
+func marshalCaptureRecord(r capture.Record) []byte {
+	b, _ := json.Marshal(captureToOut(r))
+	return b
 }
