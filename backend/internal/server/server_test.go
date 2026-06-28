@@ -10,6 +10,7 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
+	"github.com/ldm0206/claude-docker/backend/internal/system"
 )
 
 // mustUID allocates a UID via the store, failing the test on error.
@@ -41,7 +42,7 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("create user: %v", err)
 	}
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
-	return New(cfg, db)
+	return New(cfg, db, system.DefaultProvisioner)
 }
 
 func TestHealth(t *testing.T) {

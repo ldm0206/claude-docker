@@ -9,6 +9,10 @@ import (
 
 var usernameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{1,31}$`)
 
+// UsernameRegex returns the compiled regex used for username validation,
+// so other packages (e.g. the admin handler) can reuse the same rule.
+func UsernameRegex() *regexp.Regexp { return usernameRe }
+
 // HomeRoot and DataRoot default to the container layout; overridable for tests.
 var (
 	HomeRoot = "/home"

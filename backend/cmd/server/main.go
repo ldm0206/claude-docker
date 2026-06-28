@@ -10,6 +10,7 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/server"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
+	"github.com/ldm0206/claude-docker/backend/internal/system"
 )
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 	}
 	defer db.Close()
 	// (bootstrap wiring is Task 9 — do NOT add it here)
-	srv := server.New(cfg, db)
+	srv := server.New(cfg, db, system.DefaultProvisioner)
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {
 		log.Fatalf("[server] %v", err)

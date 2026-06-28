@@ -9,6 +9,7 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
+	"github.com/ldm0206/claude-docker/backend/internal/system"
 	"github.com/ldm0206/claude-docker/backend/internal/ui"
 )
 
@@ -17,17 +18,19 @@ type Server struct {
 	db         *store.DB
 	restarting atomic.Bool
 	pty        *pty.Manager
+	provisioner system.AccountProvisioner
 }
 
-// New builds a Server wired to the given config and user store. The store
-// remains owned by the caller (main.go opens/closes it); New only retains it.
-func New(cfg *config.Config, db *store.DB) *Server {
+// New builds a Server wired to the given config, user store, and account
+// provisioner. The store remains owned by the caller (main.go opens/closes it);
+// New only retains it.
+func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner) *Server {
 	p := pty.New(pty.Options{
 		Cwd:     "/workspace",
 		Env:     func() []string { return pty.BuildClaudeEnv(cfg) },
 		Command: "bash",
 	})
-	return &Server{cfg: cfg, db: db, pty: p}
+	return &Server{cfg: cfg, db: db, pty: p, provisioner: provisioner}
 }
 
 func (s *Server) PTY() *pty.Manager { return s.pty }
@@ -49,6 +52,15 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/api/capture/enable", s.handleCaptureEnable)
 		r.Post("/api/capture/disable", s.handleCaptureDisable)
 		r.Post("/api/captures/clear", s.handleCapturesClear)
+		// Admin user-management routes
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAdmin)
+			r.Post("/api/admin/users", s.handleAdminCreateUser)
+			r.Get("/api/admin/users", s.handleAdminListUsers)
+			r.Delete("/api/admin/users/{id}", s.handleAdminDeleteUser)
+			r.Post("/api/admin/users/{id}/suspend", s.handleAdminSuspendUser)
+			r.Post("/api/admin/users/{id}/unsuspend", s.handleAdminUnsuspendUser)
+		})
 	})
 	r.Handle("/*", ui.SPA())
 	return r

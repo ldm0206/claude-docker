@@ -67,6 +67,26 @@ func (d *DB) SetPassword(id int, hash string) error {
 	return err
 }
 
+func (d *DB) ListUsers() ([]User, error) {
+	rows, err := d.sql.Query(`SELECT id, uid, username, password_hash, role, must_change_password, suspended FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+	var users []User
+	for rows.Next() {
+		var u User
+		var mcp, sus int
+		if err := rows.Scan(&u.ID, &u.UID, &u.Username, &u.PasswordHash, &u.Role, &mcp, &sus); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		u.MustChangePassword = mcp == 1
+		u.Suspended = sus == 1
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 func (d *DB) SetSuspended(id int, suspended bool) error {
 	_, err := d.sql.Exec(`UPDATE users SET suspended = ? WHERE id = ?`, btoi(suspended), id)
 	return err

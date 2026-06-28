@@ -6,6 +6,41 @@ import (
 	"strconv"
 )
 
+// AccountProvisioner is the seam used by the admin user-management handlers.
+// The real implementation calls Linux commands (useradd/userdel/usermod);
+// tests inject a fake so the HTTP layer is testable on Windows.
+type AccountProvisioner interface {
+	Create(username string, uid int) error // useradd + ProvisionUserDirs
+	Delete(username string) error          // userdel + rm dirs
+	Lock(username string) error            // usermod -L
+	Unlock(username string) error          // usermod -U
+}
+
+// LinuxAccountProvisioner calls the real system commands.
+type LinuxAccountProvisioner struct{}
+
+func (LinuxAccountProvisioner) Create(username string, uid int) error {
+	if err := CreateUserAccount(username, uid); err != nil {
+		return err
+	}
+	return ProvisionUserDirs(username, uid)
+}
+
+func (LinuxAccountProvisioner) Delete(username string) error {
+	return DeleteUserAccount(username)
+}
+
+func (LinuxAccountProvisioner) Lock(username string) error {
+	return LockUserAccount(username)
+}
+
+func (LinuxAccountProvisioner) Unlock(username string) error {
+	return UnlockUserAccount(username)
+}
+
+// DefaultProvisioner is the production provisioner used by main.go.
+var DefaultProvisioner AccountProvisioner = LinuxAccountProvisioner{}
+
 func CreateUserAccount(username string, uid int) error {
 	if err := validateUsername(username); err != nil {
 		return err
