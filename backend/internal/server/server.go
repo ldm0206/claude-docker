@@ -308,6 +308,7 @@ func (s *Server) Routes() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Get("/api/state", s.handleState)
+		r.Get("/api/me", s.handleMe)
 		// NOTE: the old global POST /api/session/restart was REMOVED in Plan 3
 		// (per-session kill+create via DELETE /api/sessions/:id lands in T6).
 		// The SPA's restart button 404s for now — fine, the SPA is not the
