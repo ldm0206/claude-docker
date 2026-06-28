@@ -100,8 +100,11 @@ func defaultPwAuth(db *store.DB, username, password string) (store.User, bool) {
 	}
 	u, err := db.GetUserByUsername(username)
 	if err != nil || u.ID == 0 {
-		// Missing user or DB error: identical false as a wrong password.
+		// Missing user or DB error: run a decoy argon2id verify so this path
+		// takes the same time as a wrong-password path, defeating user
+		// enumeration via response timing. Identical false as a wrong password.
 		// Do NOT branch on err vs not-found — both return false here.
+		auth.CheckPasswordDecoy(password)
 		return store.User{}, false
 	}
 	if !auth.CheckPassword(password, u.PasswordHash) {

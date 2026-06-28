@@ -54,4 +54,18 @@ func CheckPassword(pw, encoded string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
+// decoyHash is a precomputed argon2id hash used to equalize timing when a
+// login references a user that does not exist: we still run CheckPassword so
+// the missing-user path takes the same ~argon2id time as the wrong-password
+// path, defeating user-enumeration via response timing. It is NEVER used to
+// authenticate anyone.
+var decoyHash = func() string {
+	h, _ := HashPassword("__decoy_never_valid__")
+	return h
+}()
+
+// CheckPasswordDecoy runs an argon2id verify against a throwaway hash so the
+// caller spends the same time as a real wrong-password check. Result discarded.
+func CheckPasswordDecoy(password string) { _ = CheckPassword(password, decoyHash) }
+
 var ErrPasswordChecked = errors.New("password checked")
