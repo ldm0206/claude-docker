@@ -10,12 +10,13 @@ import (
 )
 
 type Options struct {
-	Cwd     string
-	Env     func() []string
-	Command string
-	Args    []string
-	Cols    uint16
-	Rows    uint16
+	Cwd      string
+	Env      func() []string
+	Command  string
+	Args     []string
+	Cols     uint16
+	Rows     uint16
+	Username string
 }
 
 type dataCb struct {
@@ -57,7 +58,12 @@ func (m *Manager) Start() error {
 	if m.cmd != nil {
 		return nil
 	}
-	cmd := exec.Command(m.opts.Command, m.opts.Args...)
+	var cmd *exec.Cmd
+	if m.opts.Username != "" {
+		cmd = exec.Command("gosu", m.opts.Username, "bash", "-l")
+	} else {
+		cmd = exec.Command(m.opts.Command, m.opts.Args...)
+	}
 	if m.opts.Env != nil {
 		cmd.Env = m.opts.Env()
 	}
