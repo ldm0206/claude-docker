@@ -98,10 +98,13 @@ func NewManager(db *store.DB, factory PTYFactory) *Manager {
 //     lazily; opts.Cwd and opts.Username set so gosu spawns as the right user
 //     in the right directory).
 //  5. Stores the PTY in the live map.
+//  6. Registers an OnExit reaper that flips the DB row to alive=0 and removes
+//     the map entry when the PTY exits naturally (so the cap doesn't drift).
 //
 // It does NOT call p.Start() — the WS handler lazy-starts after subscribing
 // OnData, matching the existing single-PTY behavior and letting the caller
-// avoid missing the first emitted bytes.
+// avoid missing the first emitted bytes. The reaper's OnExit is independent of
+// the WS handler's own OnExit registration (PTY.OnExit allows multiple cbs).
 func (m *Manager) Create(username string, userID int, cwd string, env EnvFactory, opts pty.Options) (string, PTY, error) {
 	// --- cap check + INSERT under the lock so concurrent Creates serialize ---
 	m.mu.Lock()
@@ -152,6 +155,25 @@ func (m *Manager) Create(username string, userID int, cwd string, env EnvFactory
 		m.sessions[username] = map[string]PTY{}
 	}
 	m.sessions[username][id] = p
+
+	// Reap natural exits: when the PTY's process quits on its own (user typed
+	// `exit`, claude crashed, …), flip the DB row to alive=0 and drop the live
+	// map entry so the session stops counting toward the user's cap. This is
+	// best-effort and idempotent alongside Kill/KillAll (both call
+	// MarkSessionExited and delete the same map key; whichever runs second is
+	// a harmless no-op). The DB write is done OUTSIDE the lock to mirror Kill
+	// and avoid holding m.mu across I/O.
+	p.OnExit(func(_ int) {
+		m.mu.Lock()
+		if userSessions, ok := m.sessions[username]; ok {
+			delete(userSessions, id)
+			if len(userSessions) == 0 {
+				delete(m.sessions, username)
+			}
+		}
+		m.mu.Unlock()
+		_ = m.db.MarkSessionExited(id)
+	})
 
 	return id, p, nil
 }
