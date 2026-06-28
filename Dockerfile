@@ -6,9 +6,10 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# Stage 2: build the Go binary (CGO off → static). Pinned to 1.23 to match
-# backend/go.mod (a dep requires ≥1.23, so `go mod tidy` sets go 1.23).
-FROM golang:1.23-bookworm AS go-builder
+# Stage 2: build the Go binary (CGO off → static). Use 1.26 for headroom:
+# deps (e.g. modernc.org/sqlite) bump the go.mod go-directive, and the builder
+# must be >= go.mod. Re-sync here if go.mod exceeds the builder.
+FROM golang:1.26-bookworm AS go-builder
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
