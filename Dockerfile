@@ -6,8 +6,9 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# Stage 2: build the Go binary (CGO off → static)
-FROM golang:1.22-bookworm AS go-builder
+# Stage 2: build the Go binary (CGO off → static). Pinned to 1.23 to match
+# backend/go.mod (a dep requires ≥1.23, so `go mod tidy` sets go 1.23).
+FROM golang:1.23-bookworm AS go-builder
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
