@@ -52,6 +52,17 @@ func New(opts Options) *Manager {
 	return &Manager{opts: opts}
 }
 
+// SetUsername atomically swaps the gosu target user for the PTY's next Start().
+// An empty username makes Start() spawn the plain command (no gosu) instead —
+// the original pre-Plan-2 fallback. Safe to call on a running PTY: it only
+// affects the NEXT Start(); the live process keeps its current user until then.
+// Required by Plan 2's single-shared-PTY isolation (see server.currentUser).
+func (m *Manager) SetUsername(username string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.opts.Username = username
+}
+
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

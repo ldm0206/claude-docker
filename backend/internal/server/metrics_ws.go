@@ -9,7 +9,11 @@ import (
 )
 
 func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authedIdentity(r); !ok {
+	// Fix 3: WS routes check auth inline, so the cookie signature alone is not
+	// enough — authWSUser also re-fetches the live user and rejects suspended
+	// or since-deleted accounts. A stale-but-valid cookie on a suspended user
+	// must NOT keep streaming metrics.
+	if _, ok := s.authWSUser(r); !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

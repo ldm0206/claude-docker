@@ -17,10 +17,21 @@ type clientMsg struct {
 }
 
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authedIdentity(r); !ok {
+	// WS routes are NOT under authMiddleware, so we can't rely on the cookie
+	// signature check alone — authWSUser ALSO re-fetches the live user and
+	// rejects suspended/deleted accounts (Fix 3). Without this, a user whose
+	// account was suspended (or deleted) after the cookie was issued could
+	// keep using the terminal on a stale-but-valid cookie.
+	u, ok := s.authWSUser(r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Fix 2: drive the shared PTY's identity from the live WS user. The NEXT
+	// lazy Start() spawns `gosu <u.Username> bash -l` with BuildUserEnv.
+	// If a different user is already running the live PTY, this is a no-op
+	// until a restart — acceptable for Plan 2's single shared PTY.
+	s.setCurrentUser(u.Username, u.UID, "/data/"+u.Username+"/claude-config")
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: originPatterns(r),
 	})
@@ -83,8 +94,9 @@ func originPatterns(r *http.Request) []string {
 
 // handleCapturesWS is an inert stub (Plan 5 implements real capture): accept,
 // send an empty list, then keep the socket open reading/discarding input.
+// Auth is enforced via authWSUser (Fix 3) — same gate as the terminal WS.
 func (s *Server) handleCapturesWS(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authedIdentity(r); !ok {
+	if _, ok := s.authWSUser(r); !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
