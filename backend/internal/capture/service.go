@@ -100,6 +100,22 @@ func (s *Service) IsEnabled(sessionID string) bool {
 	return s.flag[sessionID]
 }
 
+// IsAnyEnabled reports whether ANY session currently has capture on. The
+// runner stays up while ≥1 flag is true, so this is equivalent to "the proxy
+// is currently up" for the API response. Exposed (rather than Running() on the
+// runner) so the server layer can answer "is the proxy up" without reaching
+// into the runner seam. Returns false when no session has ever enabled.
+func (s *Service) IsAnyEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, on := range s.flag {
+		if on {
+			return true
+		}
+	}
+	return false
+}
+
 // ProxyURL returns the proxy URL injected into the PTY env when capture is on,
 // e.g. "http://127.0.0.1:8888".
 func (s *Service) ProxyURL() string {

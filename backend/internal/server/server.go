@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ldm0206/claude-docker/backend/internal/capture"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
 	"github.com/ldm0206/claude-docker/backend/internal/quota"
@@ -38,18 +40,27 @@ type Server struct {
 	// Tests inject real *quota.Service with fake providers (DiskUsageProvider /
 	// CgroupWriter) for deterministic assertions, or pass nil to exercise the
 	// graceful path.
-	quota  *quota.Service
+	quota   *quota.Service
 	traffic *traffic.Service
+
+	// capture (Plan 5) drives the lazy MITM proxy lifecycle + a per-session
+	// capture flag. The session env factory consults capture.IsEnabled(sessionID)
+	// to route the PTY's HTTP through the proxy when on; the admin capture API
+	// calls capture.Enable/Disable + sess.Restart so the PTY re-spawns with the
+	// updated env. May be nil — every call site degrades gracefully (no routing,
+	// admin endpoints 503); T5 wires the real *capture.Service.
+	capture *capture.Service
 }
 
 // New wires a Server to the given config, user store, provisioner, session
-// manager, credential master key, and the optional quota / traffic services.
-// The db and sess remain owned by the caller (main.go opens/closes them); New
-// only retains them. masterKey is the 32-byte AES-256-GCM key used to seal
-// credential presets; it may be nil in which case the credential endpoints
-// return 500 (T9 wires the real key). quota and traffic may be nil — every
-// call site degrades gracefully (zeros / no-op); T7 passes the real ones.
-func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, masterKey []byte, q *quota.Service, tf *traffic.Service) *Server {
+// manager, credential master key, and the optional quota / traffic / capture
+// services. The db and sess remain owned by the caller (main.go opens/closes
+// them); New only retains them. masterKey is the 32-byte AES-256-GCM key used
+// to seal credential presets; it may be nil in which case the credential
+// endpoints return 500 (T9 wires the real key). quota, traffic, and capture may
+// be nil — every call site degrades gracefully (zeros / no-op / no routing);
+// T7 passes the real quota+traffic, T5 the real capture.
+func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, masterKey []byte, q *quota.Service, tf *traffic.Service, cap *capture.Service) *Server {
 	if sess == nil {
 		panic("server: New sess must not be nil")
 	}
@@ -61,6 +72,7 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 		masterKey:   masterKey,
 		quota:       q,
 		traffic:     tf,
+		capture:     cap,
 	}
 }
 
@@ -71,6 +83,17 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 // a function (not a precomputed slice) lets credential rotation take effect on
 // the next Create without restarting the server.
 //
+// P5-T3 — env routing: the factory ALSO consults the per-session capture flag
+// (capture.IsEnabled(sessionID)) and, when on, rewrites the returned env so
+// the PTY's HTTP traffic goes through the MITM proxy:
+//   - sets HTTP_PROXY / HTTPS_PROXY (+lower) = capture.ProxyURL();
+//   - REMOVES ALL_PROXY / all_proxy so claude doesn't bypass the proxy via SOCKS.
+//
+// The routing is applied POST BuildUserEnv at this server layer (BuildUserEnv
+// stays pure / cfg-driven), by filtering the []string it returns. The real
+// *pty.Manager calls opts.Env() on every Start, so a Manager.Restart re-invokes
+// this closure and picks up a flag flip without a server restart.
+//
 // SECURITY: the decrypted credential lives ONLY in the returned []string (which
 // becomes exec.Cmd.Env). It is never logged, never persisted, never returned.
 // Decryption failures (corrupt blob, rotated MASTER_KEY) are logged at WARNING
@@ -78,10 +101,54 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 // the injected env. Failing the session over a corrupt credential would lock a
 // user out of their only path to recovery.
 func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
-	return func(_ string) []string {
+	return func(_ string, sessionID string) []string {
 		credEnv := s.resolveCredEnv(u)
-		return pty.BuildUserEnv(s.cfg, u.Username, "/data/"+u.Username+"/claude-config", credEnv)
+		env := pty.BuildUserEnv(s.cfg, u.Username, "/data/"+u.Username+"/claude-config", credEnv)
+		return s.applyCaptureRouting(env, sessionID)
 	}
+}
+
+// applyCaptureRouting rewrites the env slice for per-session MITM capture. When
+// capture is on for sessionID, it:
+//   - drops ALL_PROXY / all_proxy (so claude can't bypass via SOCKS);
+//   - sets HTTP_PROXY / HTTPS_PROXY / http_proxy / https_proxy = the proxy URL
+//     (overriding any inherited or cfg value).
+//
+// When capture is off (or s.capture is nil — the not-yet-wired state), env is
+// returned unchanged. The env slice is rebuilt filtered (the dropped keys are
+// genuinely removed, not blanked) so the spawned process never sees them.
+func (s *Server) applyCaptureRouting(env []string, sessionID string) []string {
+	if s.capture == nil || !s.capture.IsEnabled(sessionID) {
+		return env
+	}
+	proxyURL := s.capture.ProxyURL()
+	drop := map[string]struct{}{
+		"ALL_PROXY": {},
+		"all_proxy": {},
+	}
+	// First pass: drop ALL_PROXY/all_proxy entries; keep everything else.
+	filtered := make([]string, 0, len(env))
+	for _, e := range env {
+		key, _, ok := strings.Cut(e, "=")
+		if !ok {
+			filtered = append(filtered, e)
+			continue
+		}
+		if _, dropIt := drop[key]; dropIt {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	// Second pass: override the 4 proxy keys (set last so they win). BuildUserEnv
+	// already sorted the slice; we append the overrides unsorted — exec.Cmd.Env
+	// does not require sorted keys, and last-wins for duplicates is what we want.
+	filtered = append(filtered,
+		"HTTP_PROXY="+proxyURL,
+		"HTTPS_PROXY="+proxyURL,
+		"http_proxy="+proxyURL,
+		"https_proxy="+proxyURL,
+	)
+	return filtered
 }
 
 // resolveCredEnv decrypts the user's bound credential preset and returns it as
@@ -246,8 +313,10 @@ func (s *Server) Routes() http.Handler {
 		// The SPA's restart button 404s for now — fine, the SPA is not the
 		// Plan 3 test target.
 		r.Post("/auth/change-password", s.handleChangePassword)
-		r.Post("/api/capture/enable", s.handleCaptureEnable)
-		r.Post("/api/capture/disable", s.handleCaptureDisable)
+		// /api/captures/clear + /ws/captures are the public/WS capture surfaces
+		// (T4 implements the real list/clear/WS). The old global capture
+		// enable/disable stubs were REMOVED in P5-T3 — capture is now
+		// admin-only + per-session, see /api/admin/sessions/:id/capture/*.
 		r.Post("/api/captures/clear", s.handleCapturesClear)
 		// User session-management endpoints (T6)
 		r.Post("/api/sessions", s.handleCreateSession)
@@ -269,6 +338,10 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
 			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
+			// Admin per-session capture toggle (P5-T3). Enable lazily starts the
+			// MITM proxy + restarts the session PTY so its env routes through it.
+			r.Post("/api/admin/sessions/{id}/capture/enable", s.handleAdminCaptureEnable)
+			r.Post("/api/admin/sessions/{id}/capture/disable", s.handleAdminCaptureDisable)
 			// Admin role-template CRUD (T7)
 			r.Get("/api/admin/templates", s.handleAdminListTemplates)
 			r.Post("/api/admin/templates", s.handleAdminCreateTemplate)
@@ -296,20 +369,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 
 // handleState returns the minimal client-facing state. Plan 3 dropped
 // `sessionAlive` (it referred to the now-removed shared PTY); per-user session
-// liveness is exposed via /api/sessions in T6. captureOn stays false until the
-// real MITM capture lands in Plan 5.
+// liveness is exposed via /api/sessions. captureOn stays false until the real
+// MITM capture lands in Plan 5.
 func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"captureOn": false})
 }
 
-// Capture is inert in Plan 1 (real MITM arrives in Plan 5). These stubs keep
-// the existing SPA's capture panel from erroring.
-func (s *Server) handleCaptureEnable(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"captureOn": false, "captureUp": false, "restarted": false})
-}
-func (s *Server) handleCaptureDisable(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"captureOn": false})
-}
+// handleCapturesClear is an inert stub retained for the Plan 5 capture surface.
+// T4 implements the real clear/list/WS over the capture store + Service.
 func (s *Server) handleCapturesClear(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

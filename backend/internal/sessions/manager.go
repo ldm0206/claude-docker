@@ -59,11 +59,17 @@ var _ PTY = (*pty.Manager)(nil)
 // `func(o pty.Options) PTY { return pty.New(o) }`; tests pass a fake.
 type PTYFactory func(opts pty.Options) PTY
 
-// EnvFactory resolves the credential/env slice for a username lazily, so the
-// PTY always sees the live credential (re-decrypted at spawn time). Returning
-// a function (rather than a precomputed slice) lets credential rotation take
-// effect on the next Create without restarting the server.
-type EnvFactory func(username string) []string
+// EnvFactory resolves the credential/env slice for a (username, sessionID)
+// lazily, so the PTY always sees the live credential AND the live per-session
+// state (e.g. the Plan 5 capture flag, which routes the PTY through the MITM
+// proxy when on). Returning a function (rather than a precomputed slice) lets
+// BOTH credential rotation AND capture toggling take effect on the next Start
+// (including a Manager.Restart) without restarting the server.
+//
+// The sessionID arg was added in P5-T3 so the factory can look up per-session
+// state (capture.IsEnabled(sessionID)); the username is kept for the
+// credential lookup that pre-dated Plan 5.
+type EnvFactory func(username, sessionID string) []string
 
 // Manager owns a map of live PTYs keyed by username → sessionID, guarded by
 // a single mutex. The mutex covers both the map and the cap-check+INSERT
@@ -94,7 +100,7 @@ func NewManager(db *store.DB, factory PTYFactory) *Manager {
 //     means unlimited.
 //  2. Generates a 16-byte crypto/rand id (base64 RawURL — no padding, URL-safe).
 //  3. INSERTs a sessions row (alive=1).
-//  4. Builds the PTY via factory (opts.Env wrapped to call envFactory(username)
+//  4. Builds the PTY via factory (opts.Env wrapped to call envFactory(username, id)
 //     lazily; opts.Cwd and opts.Username set so gosu spawns as the right user
 //     in the right directory).
 //  5. Stores the PTY in the live map.
@@ -143,11 +149,13 @@ func (m *Manager) Create(username string, userID int, cwd string, env EnvFactory
 		return "", nil, fmt.Errorf("persist session: %w", err)
 	}
 
-	// --- build opts: env resolved lazily through the factory ---
+	// --- build opts: env resolved lazily through the factory (closes over the
+	// freshly-minted id, so the factory sees the right sessionID for per-session
+	// state like the Plan 5 capture flag) ---
 	opts.Cwd = cwd
 	opts.Username = username
 	if env != nil {
-		opts.Env = func() []string { return env(username) }
+		opts.Env = func() []string { return env(username, id) }
 	}
 	p := m.factory(opts)
 
@@ -222,6 +230,42 @@ func (m *Manager) Kill(username, sessionID string) error {
 		p.Stop()
 	}
 	_ = m.db.MarkSessionExited(sessionID)
+	return nil
+}
+
+// Restart stops the live PTY for (username, sessionID) and starts a fresh one
+// in place, keeping the SAME session id and DB row. It exists for Plan 5's
+// capture toggle: the PTY env factory is lazy (the real *pty.Manager calls
+// opts.Env() on every Start), so Stop+Start re-reads per-session state like
+// the capture flag and routes the new process through (or away from) the MITM
+// proxy without creating a new session id or DB row.
+//
+// If the session is not in the live map Restart returns ErrNotFound and is a
+// no-op (the caller — the admin capture API — turns this into a 404). A nil
+// PTY entry is also ErrNotFound. Restart does NOT touch the DB row: the row
+// stays alive=1 across the restart (the session did not exit; it was re-spawned).
+//
+// The PTY's OnExit reapers (registered by Create) survive the restart — they
+// were attached to the *pty.Manager instance, which Stop+Start reuses — so a
+// natural exit of the restarted process is still reaped normally.
+func (m *Manager) Restart(username, sessionID string) error {
+	m.mu.Lock()
+	userSessions, ok := m.sessions[username]
+	if !ok {
+		m.mu.Unlock()
+		return ErrNotFound
+	}
+	p, ok := userSessions[sessionID]
+	if !ok || p == nil {
+		m.mu.Unlock()
+		return ErrNotFound
+	}
+	m.mu.Unlock()
+
+	p.Stop()
+	if err := p.Start(); err != nil {
+		return fmt.Errorf("restart session %s: %w", sessionID, err)
+	}
 	return nil
 }
 

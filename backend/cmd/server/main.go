@@ -77,7 +77,7 @@ func main() {
 	}
 	sshSrv := sshserver.New(db, ":"+sftpPort)
 
-	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, masterKey, qsvc, tsvc)
+	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, masterKey, qsvc, tsvc, nil)
 
 	// Background loops.
 	ctx, cancel := context.WithCancel(context.Background())
