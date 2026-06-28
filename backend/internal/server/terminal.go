@@ -17,7 +17,7 @@ type clientMsg struct {
 }
 
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
+	if _, ok := s.authedIdentity(r); !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -84,7 +84,7 @@ func originPatterns(r *http.Request) []string {
 // handleCapturesWS is an inert stub (Plan 5 implements real capture): accept,
 // send an empty list, then keep the socket open reading/discarding input.
 func (s *Server) handleCapturesWS(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
+	if _, ok := s.authedIdentity(r); !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

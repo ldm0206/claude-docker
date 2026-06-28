@@ -8,14 +8,13 @@ func envOf(m map[string]string) func(string) (string, bool) {
 
 func TestLoadValid(t *testing.T) {
 	c, err := Load(envOf(map[string]string{
-		"ACCESS_KEY":           "sekret",
 		"SESSION_SECRET":       "sssh",
 		"ANTHROPIC_AUTH_TOKEN": "tok",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.AccessKey != "sekret" || c.AnthropicAuthToken != "tok" {
+	if c.AnthropicAuthToken != "tok" {
 		t.Fatalf("got %+v", c)
 	}
 	if c.APITimeoutMS != 600000 || c.Port != 8080 || c.NoProxy != "localhost,127.0.0.1" {
@@ -23,15 +22,29 @@ func TestLoadValid(t *testing.T) {
 	}
 }
 
-func TestLoadMissingAccessKey(t *testing.T) {
-	_, err := Load(envOf(map[string]string{"SESSION_SECRET": "x"}))
-	if err == nil {
-		t.Fatal("expected error for missing ACCESS_KEY")
+func TestLoadNoAccessKeyRequired(t *testing.T) {
+	c, err := Load(envOf(map[string]string{"SESSION_SECRET": "s"}))
+	if err != nil {
+		t.Fatalf("Load must not require ACCESS_KEY: %v", err)
+	}
+	if c.SessionSecret != "s" {
+		t.Fatalf("session secret not read")
+	}
+}
+
+func TestLoadBootstrap(t *testing.T) {
+	c, _ := Load(envOf(map[string]string{
+		"SESSION_SECRET":          "s",
+		"BOOTSTRAP_ADMIN_USER":    "root",
+		"BOOTSTRAP_ADMIN_PASSWORD": "p",
+	}))
+	if c.BootstrapAdminUser != "root" || c.BootstrapAdminPassword != "p" {
+		t.Fatalf("bootstrap env not read: %+v", c)
 	}
 }
 
 func TestLoadBadTimeout(t *testing.T) {
-	_, err := Load(envOf(map[string]string{"ACCESS_KEY": "k", "API_TIMEOUT_MS": "nope"}))
+	_, err := Load(envOf(map[string]string{"SESSION_SECRET": "k", "API_TIMEOUT_MS": "nope"}))
 	if err == nil {
 		t.Fatal("expected error for bad API_TIMEOUT_MS")
 	}

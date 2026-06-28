@@ -16,7 +16,6 @@ func TestBuildClaudeEnv(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/skip")
 
 	cfg := &config.Config{
-		AccessKey:          "k",
 		AnthropicAuthToken: "tok",
 		AnthropicBaseURL:   "http://gw",
 		HTTPProxy:          "http://p:7890",

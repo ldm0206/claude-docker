@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
-	if !s.authed(r) {
+	if _, ok := s.authedIdentity(r); !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

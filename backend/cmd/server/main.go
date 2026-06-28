@@ -5,9 +5,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/server"
+	"github.com/ldm0206/claude-docker/backend/internal/store"
 )
 
 func main() {
@@ -18,7 +20,18 @@ func main() {
 	if cfg.SessionSecret == "" {
 		log.Fatal("[server] SESSION_SECRET environment variable is required")
 	}
-	srv := server.New(cfg)
+	dbPath := os.Getenv("DATA_DIR")
+	if dbPath == "" {
+		dbPath = "/data"
+	}
+	dbPath = filepath.Join(dbPath, "app.db")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		log.Fatalf("[server] open store: %v", err)
+	}
+	defer db.Close()
+	// (bootstrap wiring is Task 9 — do NOT add it here)
+	srv := server.New(cfg, db)
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {
 		log.Fatalf("[server] %v", err)

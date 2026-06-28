@@ -4,28 +4,30 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync/atomic"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/ui"
 )
 
 type Server struct {
 	cfg        *config.Config
+	db         *store.DB
 	restarting atomic.Bool
 	pty        *pty.Manager
 }
 
-func New(cfg *config.Config) *Server {
+// New builds a Server wired to the given config and user store. The store
+// remains owned by the caller (main.go opens/closes it); New only retains it.
+func New(cfg *config.Config, db *store.DB) *Server {
 	p := pty.New(pty.Options{
 		Cwd:     "/workspace",
 		Env:     func() []string { return pty.BuildClaudeEnv(cfg) },
 		Command: "bash",
 	})
-	return &Server{cfg: cfg, pty: p}
+	return &Server{cfg: cfg, db: db, pty: p}
 }
 
 func (s *Server) PTY() *pty.Manager { return s.pty }
@@ -33,7 +35,7 @@ func (s *Server) PTY() *pty.Manager { return s.pty }
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", s.handleHealth)
-	r.Post("/auth", s.handleAuth)
+	r.Post("/auth", s.handleLogin)
 	r.Post("/logout", s.handleLogout)
 	// /ws/* routes check the cookie inside the handler before upgrading.
 	r.Get("/ws/terminal", s.handleTerminalWS)
@@ -43,6 +45,7 @@ func (s *Server) Routes() http.Handler {
 		r.Use(s.authMiddleware)
 		r.Get("/api/state", s.handleState)
 		r.Post("/api/session/restart", s.handleRestart)
+		r.Post("/auth/change-password", s.handleChangePassword)
 		r.Post("/api/capture/enable", s.handleCaptureEnable)
 		r.Post("/api/capture/disable", s.handleCaptureDisable)
 		r.Post("/api/captures/clear", s.handleCapturesClear)
@@ -52,30 +55,6 @@ func (s *Server) Routes() http.Handler {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"ok": true})
-}
-
-type authReq struct{ Key string }
-
-func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
-	var body authReq
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, 400, map[string]any{"error": "bad body"})
-		return
-	}
-	if !auth.EqualString(body.Key, s.cfg.AccessKey) {
-		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
-		return
-	}
-	cookie, err := auth.SignSession(map[string]any{"iat": time.Now().Unix()}, s.cfg.SessionSecret)
-	if err != nil {
-		writeJSON(w, 500, map[string]any{"error": "sign failed"})
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name: "session", Value: cookie, Path: "/",
-		HttpOnly: true, SameSite: http.SameSiteLaxMode,
-	})
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -113,22 +92,28 @@ func (s *Server) handleCapturesClear(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-func (s *Server) authed(r *http.Request) bool {
-	c, err := r.Cookie("session")
-	if err != nil {
-		return false
-	}
-	_, ok := auth.VerifySession(c.Value, s.cfg.SessionSecret)
-	return ok
-}
-
+// authMiddleware guards the authed route group. It verifies the session cookie,
+// rejects missing/invalid auth (and suspended users) with 401/403, and stashes
+// the Identity in the request context for downstream handlers.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authed(r) {
+		id, ok := s.authedIdentity(r)
+		if !ok {
 			writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Re-check the live user so a suspended user can't keep using an
+		// already-issued cookie.
+		u, err := s.db.GetUserByUsername(id.Username)
+		if err != nil {
+			writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+			return
+		}
+		if u.Suspended {
+			writeJSON(w, 403, map[string]any{"error": "suspended"})
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
 	})
 }
 
