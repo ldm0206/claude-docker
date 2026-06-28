@@ -30,7 +30,7 @@ func TestSchemaCreatesAllTables(t *testing.T) {
 	}
 	defer db.Close()
 
-	wantTables := []string{"users", "role_templates", "credential_presets", "sessions"}
+	wantTables := []string{"users", "role_templates", "credential_presets", "sessions", "traffic"}
 	for _, tbl := range wantTables {
 		// verify table exists in sqlite_master
 		var name string

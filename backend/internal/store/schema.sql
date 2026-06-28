@@ -41,3 +41,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   last_seen_at INTEGER NOT NULL,
   alive INTEGER NOT NULL DEFAULT 1
 );
+
+CREATE TABLE IF NOT EXISTS traffic (
+  user_id INTEGER NOT NULL,
+  year_month TEXT NOT NULL,            -- "YYYY-MM"
+  rx_bytes INTEGER NOT NULL DEFAULT 0,
+  tx_bytes INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, year_month)
+);
