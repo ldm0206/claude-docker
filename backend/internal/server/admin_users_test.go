@@ -11,6 +11,8 @@ import (
 
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
+	"github.com/ldm0206/claude-docker/backend/internal/pty"
+	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
 )
@@ -84,8 +86,20 @@ func newTestServerWithAdmin(t *testing.T) (*Server, *fakeProvisioner, *store.DB)
 	}
 	fake := &fakeProvisioner{}
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
-	srv := New(cfg, db, fake)
+	// Wire a sessions.Manager backed by a no-op fake PTY factory. The admin
+	// tests never create real sessions, so the factory is never invoked; it
+	// just has to be non-nil so server.New doesn't panic.
+	mgr := sessions.NewManager(db, newFakePTYFactoryForAdmin())
+	srv := New(cfg, db, fake, mgr)
 	return srv, fake, db
+}
+
+// newFakePTYFactoryForAdmin returns a PTYFactory suitable for the admin tests,
+// which never create real sessions. Shared here so admin_users_test does not
+// duplicate the fakePTY type defined in server_test.go. It needs pty.Options,
+// hence the import in this file.
+func newFakePTYFactoryForAdmin() sessions.PTYFactory {
+	return func(o pty.Options) sessions.PTY { return &fakePTY{} }
 }
 
 // loginAs logs in as the given user and returns the session cookie value.

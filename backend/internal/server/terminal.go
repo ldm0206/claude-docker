@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/coder/websocket"
+	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 )
 
 type clientMsg struct {
@@ -16,6 +17,22 @@ type clientMsg struct {
 	ExitCode int    `json:"exitCode,omitempty"`
 }
 
+// handleTerminalWS drives a per-user, per-session PTY over a WebSocket.
+//
+// Flow:
+//  1. authWSUser → live, non-suspended user (else 401, no upgrade).
+//  2. Read ?session=<id>:
+//     - present  → attach to that session (404 if unknown to this user).
+//     - absent   → CREATE a new session (409 if the per-user cap is hit).
+//  3. Lazy-start the PTY (ensureSession handles this) so the first emitted
+//     bytes are not missed.
+//  4. After the WS upgrade, send a single {type:"session",id:<sid>} message so
+//     the client knows which session it is bound to (esp. on the create path).
+//  5. Subscribe OnData → c.Write; OnExit → {type:"pty-exit",exitCode}. On WS
+//     close, ONLY unsubscribe (the PTY survives = detach; T6 DELETE reaps it).
+//
+// The create/attach/start logic is delegated to Server.ensureSession so it can
+// be unit-tested without a real WebSocket dial (see server_test.go).
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	// WS routes are NOT under authMiddleware, so we can't rely on the cookie
 	// signature check alone — authWSUser ALSO re-fetches the live user and
@@ -27,11 +44,17 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// Fix 2: drive the shared PTY's identity from the live WS user. The NEXT
-	// lazy Start() spawns `gosu <u.Username> bash -l` with BuildUserEnv.
-	// If a different user is already running the live PTY, this is a no-op
-	// until a restart — acceptable for Plan 2's single shared PTY.
-	s.setCurrentUser(u.Username, u.UID, "/data/"+u.Username+"/claude-config")
+
+	// Resolve the PTY BEFORE accepting the upgrade so we can return proper HTTP
+	// status codes (404 unknown session, 409 cap reached). After the upgrade we
+	// can only close the socket.
+	sid := r.URL.Query().Get("session")
+	p, effSID, status := s.ensureSession(u, sid)
+	if status != http.StatusOK {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: originPatterns(r),
 	})
@@ -40,30 +63,35 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close(websocket.StatusNormalClosure, "")
 
-	if !s.pty.Alive() {
-		if err := s.pty.Start(); err != nil {
-			return
-		}
-	}
 	ctx := r.Context()
 
-	unsubData := s.pty.OnData(func(b []byte) {
+	// Tell the client which session id it's bound to. On the create path this
+	// is a newly-minted id the client has never seen; on attach it echoes the
+	// requested id. Either way the client needs it for /api/sessions/:id (T6).
+	if err := c.Write(ctx, websocket.MessageText, mustJSON(map[string]any{
+		"type": "session",
+		"id":   effSID,
+	})); err != nil {
+		return
+	}
+
+	unsubData := p.OnData(func(b []byte) {
 		_ = c.Write(ctx, websocket.MessageText, b)
 	})
 	defer unsubData()
-	unsubExit := s.pty.OnExit(func(code int) {
-		if s.restarting.Load() || s.pty.Alive() {
-			return
-		}
-		msg, _ := json.Marshal(clientMsg{Type: "pty-exit", ExitCode: code})
-		_ = c.Write(ctx, websocket.MessageText, msg)
+	unsubExit := p.OnExit(func(code int) {
+		// Natural process exit: notify the client. We do NOT call
+		// MarkSessionExited here — the row stays alive=1 until an explicit
+		// kill (T6 DELETE) or a reconnect notices and reaps it. Acceptable
+		// for Plan 3; documented in the task-5 report.
+		_ = c.Write(ctx, websocket.MessageText, mustJSON(clientMsg{Type: "pty-exit", ExitCode: code}))
 	})
 	defer unsubExit()
 
 	for {
 		_, data, err := c.Read(ctx)
 		if err != nil {
-			return
+			return // WS closed: detach. PTY keeps running; only unsubscribe (deferred above).
 		}
 		var msg clientMsg
 		if err := json.Unmarshal(data, &msg); err != nil {
@@ -71,9 +99,9 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		}
 		switch msg.Type {
 		case "input":
-			_ = s.pty.Write([]byte(msg.Data))
+			_ = p.Write([]byte(msg.Data))
 		case "resize":
-			_ = s.pty.Resize(msg.Cols, msg.Rows)
+			_ = p.Resize(msg.Cols, msg.Rows)
 		}
 	}
 }
@@ -113,3 +141,7 @@ func (s *Server) handleCapturesWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// Compile-time guarantee that Server uses sessions.PTY (catches an interface
+// drift between the manager and this handler early).
+var _ = sessions.PTY(nil)
