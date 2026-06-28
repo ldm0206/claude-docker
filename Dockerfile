@@ -25,6 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DISABLE_UPDATES=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ripgrep curl ca-certificates jq tini gosu sudo openssl screen tmux \
+        nftables openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Download claude binary to a shared, root-owned path used by ALL users.
@@ -44,4 +45,4 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
-EXPOSE 8080
+EXPOSE 8080 22

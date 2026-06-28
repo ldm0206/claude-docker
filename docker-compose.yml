@@ -3,13 +3,19 @@ services:
     build: .
     image: ghcr.io/ldm0206/claude-docker:latest
     ports:
-      - "8080:8080"
+      - "8080:8080"   # HTTP (web UI + API)
+      - "22:22"       # SSH/SFTP (configurable via SFTP_PORT)
     env_file: .env
+    # NET_ADMIN: nftables per-user traffic accounting only. No --privileged,
+    # no Docker socket. Server runs as root inside the container (required for
+    # setuid-based per-user isolation; the container is the trust boundary).
+    cap_add:
+      - NET_ADMIN
     volumes:
-      - claude-workspace:/workspace
-      - claude-config:/home/claude/.claude
+      - claude-home:/home      # per-user homes + workspaces
+      - claude-data:/data      # app.db + per-user claude configs
     restart: unless-stopped
 
 volumes:
-  claude-workspace:
-  claude-config:
+  claude-home:
+  claude-data:
