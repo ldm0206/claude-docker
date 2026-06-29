@@ -33,7 +33,7 @@ func (s *Server) recordFileTraffic(userID int, rx, tx int64) {
 	if s.db == nil || (rx == 0 && tx == 0) {
 		return
 	}
-	ym := time.Now().UTC().Format("2006-01")
+	ym := time.Now().Format("2006-01")
 	_ = s.db.AddTraffic(userID, ym, rx, tx)
 }
 
