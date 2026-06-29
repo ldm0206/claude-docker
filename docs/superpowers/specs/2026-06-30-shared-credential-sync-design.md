@@ -54,8 +54,8 @@ A new function in `internal/system`:
 // SyncSharedCredentials copies credential files (.credentials*) from
 // the shared source dir into the user's claude-config dir. Source
 // missing or empty is a no-op (not an error). Files are chown'd to
-// uid, mode 0600.
-func SyncSharedCredentials(uid int) error
+// uid, mode 0600. Target path is per-username, so both are required.
+func SyncSharedCredentials(username string, uid int) error
 ```
 
 Behavior:
