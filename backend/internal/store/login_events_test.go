@@ -78,6 +78,6 @@ func TestLoginEvents_ListCap(t *testing.T) {
 		t.Fatalf("list default: %v", err)
 	}
 	if len(got2) != 5 {
-		t.Errorf("default should return all when <100: got %d", len(got2))
+		t.Errorf("default limit (<=0 → 100) should return all 5 when under the cap: got %d", len(got2))
 	}
 }
