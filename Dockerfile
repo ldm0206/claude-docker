@@ -25,7 +25,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DISABLE_UPDATES=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ripgrep curl ca-certificates jq tini gosu sudo openssl screen tmux \
-        nftables openssh-client \
+        nftables openssh-client python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 22 LTS (NodeSource) — matches the web-builder's node:22. All users
+# get node/npm on the system PATH.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Download claude binary to a shared, root-owned path used by ALL users.
@@ -45,4 +51,4 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
-EXPOSE 8080 22
+EXPOSE 8080
