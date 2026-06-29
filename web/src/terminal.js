@@ -45,6 +45,20 @@ export function mountTerminal(root) {
     if (el) el.textContent = msg;
   }
 
+  async function refreshSessions() {
+    try { sessions = await (await fetch("/api/sessions")).json(); } catch { sessions = []; }
+    const tabs = document.getElementById("sts");
+    if (!tabs) return;
+    tabs.innerHTML = "";
+    for (const s of sessions) {
+      const t = document.createElement("div");
+      t.className = "session-tab" + (s.id === currentSID ? " active" : "");
+      t.textContent = (s.name || s.id.slice(0, 8)) + (s.alive ? "" : " (dead)");
+      t.onclick = () => attach(s.id);
+      tabs.appendChild(t);
+    }
+  }
+
   function scheduleReconnect(sid) {
     if (intentionalClose) return;
     if (reconnectAttempts >= 6) {
@@ -100,9 +114,12 @@ export function mountTerminal(root) {
   document.getElementById("kill-sess").onclick = async () => {
     if (!currentSID) return;
     intentionalClose = true;
-    await fetch(`/api/sessions/${encodeURIComponent(currentSID)}`, { method: "DELETE" });
-    currentSID = null; term.reset();
-    intentionalClose = false;
+    try {
+      await fetch(`/api/sessions/${encodeURIComponent(currentSID)}`, { method: "DELETE" });
+      currentSID = null; term.reset();
+    } finally {
+      intentionalClose = false;
+    }
     attach(""); refreshSessions();
   };
 
