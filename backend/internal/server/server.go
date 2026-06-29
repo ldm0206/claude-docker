@@ -363,7 +363,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: s.sameSiteMode()})
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

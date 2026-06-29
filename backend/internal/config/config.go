@@ -6,18 +6,19 @@ import (
 )
 
 type Config struct {
-	AnthropicAPIKey       string
-	AnthropicAuthToken    string
-	AnthropicBaseURL      string
-	HTTPProxy             string
-	HTTPSProxy            string
-	AllProxy              string
-	NoProxy               string
-	APITimeoutMS          int
-	Port                  int
-	SessionSecret         string
-	BootstrapAdminUser    string
+	AnthropicAPIKey        string
+	AnthropicAuthToken     string
+	AnthropicBaseURL       string
+	HTTPProxy              string
+	HTTPSProxy             string
+	AllProxy               string
+	NoProxy                string
+	APITimeoutMS           int
+	Port                   int
+	SessionSecret          string
+	BootstrapAdminUser     string
 	BootstrapAdminPassword string
+	CookieSameSite         string
 }
 
 func Load(get func(string) (string, bool)) (*Config, error) {
@@ -32,6 +33,10 @@ func Load(get func(string) (string, bool)) (*Config, error) {
 	c.AllProxy = opt("ALL_PROXY")
 	c.BootstrapAdminUser = opt("BOOTSTRAP_ADMIN_USER")
 	c.BootstrapAdminPassword = opt("BOOTSTRAP_ADMIN_PASSWORD")
+	c.CookieSameSite = opt("COOKIE_SAMESITE")
+	if c.CookieSameSite == "" {
+		c.CookieSameSite = "none"
+	}
 	if v, ok := get("NO_PROXY"); ok {
 		c.NoProxy = v
 	}

@@ -81,13 +81,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "sign failed"})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session",
-		Value:    cookie,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	s.setSessionCookie(w, cookie)
 	writeJSON(w, 200, map[string]any{"role": u.Role, "mustChangePassword": u.MustChangePassword})
 }
 
@@ -164,5 +158,30 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// sameSiteMode maps the config string to http.SameSite. Unknown values default
+// to None (the HTTPS-safe choice that lets the cookie ride the WS upgrade).
+func (s *Server) sameSiteMode() http.SameSite {
+	switch s.cfg.CookieSameSite {
+	case "lax":
+		return http.SameSiteLaxMode
+	case "strict":
+		return http.SameSiteStrictMode
+	default:
+		return http.SameSiteNoneMode
+	}
+}
+
+// setSessionCookie sets the auth cookie with Secure + configured SameSite.
+func (s *Server) setSessionCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: s.sameSiteMode(),
 	})
 }

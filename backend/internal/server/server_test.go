@@ -194,6 +194,34 @@ func TestLoginSuccessSetsCookieAndRole(t *testing.T) {
 	}
 }
 
+// TestLoginCookieAttributes verifies the session cookie is set with Secure and
+// the configured SameSite (default "none" for HTTPS deployments).
+func TestLoginCookieAttributes(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("POST", "/auth", strings.NewReader(`{"username":"alice","password":"pw123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status %d; body=%s", w.Code, w.Body.String())
+	}
+	var sc *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session" {
+			sc = c
+		}
+	}
+	if sc == nil {
+		t.Fatal("no session cookie")
+	}
+	if !sc.Secure {
+		t.Error("cookie must have Secure=true")
+	}
+	if sc.SameSite != http.SameSiteNoneMode {
+		t.Errorf("SameSite = %v, want None (default)", sc.SameSite)
+	}
+}
+
 // loginAsAlice performs a login and returns the session cookie value.
 func loginAsAlice(t *testing.T, s *testServer) string {
 	t.Helper()
