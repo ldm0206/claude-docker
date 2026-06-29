@@ -232,10 +232,12 @@ func credEnvFromSecrets(c credentialSecretFields) map[string]string {
 //
 // The WS handler is intentionally thin: this method is unit-testable without a
 // real WebSocket dial (see server_test.go's ensureSession tests).
-func (s *Server) ensureSession(u store.User, sid string) (sessions.PTY, string, int) {
+func (s *Server) ensureSession(u store.User, sid string, r *http.Request) (sessions.PTY, string, int) {
 	if sid != "" {
 		// Attach to an explicit session. Unknown id → 404 (the client asked for
 		// a specific one; silently creating a new one would be surprising).
+		// NOTE: the attach path does NOT update client_ip — the stored IP is the
+		// origin recorded at session creation, not the last-connect address.
 		p, ok := s.sess.Get(u.Username, sid)
 		if !ok {
 			return nil, "", http.StatusNotFound
@@ -256,6 +258,7 @@ func (s *Server) ensureSession(u store.User, sid string) (sessions.PTY, string, 
 		Cols:     80,
 		Rows:     24,
 		Username: u.Username,
+		ClientIP: s.clientIP(r),
 	}
 	newSID, p, err := s.sess.Create(u.Username, u.ID, "/home/"+u.Username+"/workspace", envFactory, opts)
 	if err != nil {

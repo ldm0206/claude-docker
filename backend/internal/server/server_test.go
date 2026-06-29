@@ -347,7 +347,7 @@ func TestEnsureSessionCreatesWhenAbsent(t *testing.T) {
 		t.Fatalf("get alice: %v", err)
 	}
 
-	p, sid, status := s.ensureSession(alice, "")
+	p, sid, status := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	if status != 200 {
 		t.Fatalf("status = %d, want 200", status)
 	}
@@ -378,14 +378,14 @@ func TestEnsureSessionAttachesExisting(t *testing.T) {
 	}
 
 	// Seed one session.
-	_, sid0, _ := s.ensureSession(alice, "")
+	_, sid0, _ := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	created := s.createdPTYs()
 	if len(created) != 1 {
 		t.Fatalf("expected 1 PTY after create, got %d", len(created))
 	}
 
 	// Attach to sid0 — must NOT create a second PTY.
-	p2, sid2, status := s.ensureSession(alice, sid0)
+	p2, sid2, status := s.ensureSession(alice, sid0, httptest.NewRequest("GET", "/", nil))
 	if status != 200 {
 		t.Fatalf("status = %d, want 200", status)
 	}
@@ -408,7 +408,7 @@ func TestEnsureSessionUnknownSIDReturns404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get alice: %v", err)
 	}
-	_, _, status := s.ensureSession(alice, "does-not-exist")
+	_, _, status := s.ensureSession(alice, "does-not-exist", httptest.NewRequest("GET", "/", nil))
 	if status != 404 {
 		t.Fatalf("status = %d, want 404", status)
 	}
@@ -425,10 +425,10 @@ func TestEnsureSessionCapReachedReturns409(t *testing.T) {
 	if err := s.db.SetUserMaxSessions(alice.ID, 1); err != nil {
 		t.Fatalf("set max sessions: %v", err)
 	}
-	if _, _, st := s.ensureSession(alice, ""); st != 200 {
+	if _, _, st := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil)); st != 200 {
 		t.Fatalf("1st create status=%d, want 200", st)
 	}
-	_, _, status := s.ensureSession(alice, "")
+	_, _, status := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	if status != 409 {
 		t.Fatalf("cap-reached status = %d, want 409", status)
 	}
@@ -442,7 +442,7 @@ func TestEnsureSessionStartsDeadPTY(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get alice: %v", err)
 	}
-	p, sid, _ := s.ensureSession(alice, "")
+	p, sid, _ := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	fp := p.(*fakePTY)
 	if atomic.LoadInt32(&fp.startCnt) != 1 {
 		t.Fatalf("Start called %d, want 1", atomic.LoadInt32(&fp.startCnt))
@@ -453,7 +453,7 @@ func TestEnsureSessionStartsDeadPTY(t *testing.T) {
 		t.Fatal("pty should be dead after Stop")
 	}
 	// ensureSession on the same id must lazy-restart.
-	if _, _, st := s.ensureSession(alice, sid); st != 200 {
+	if _, _, st := s.ensureSession(alice, sid, httptest.NewRequest("GET", "/", nil)); st != 200 {
 		t.Fatalf("re-attach status=%d, want 200", st)
 	}
 	if atomic.LoadInt32(&fp.startCnt) != 2 {

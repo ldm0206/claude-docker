@@ -17,6 +17,7 @@ type Options struct {
 	Cols     uint16
 	Rows     uint16
 	Username string
+	ClientIP string
 }
 
 type dataCb struct {

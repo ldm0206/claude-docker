@@ -395,6 +395,37 @@ func TestManagerConcurrentCreateNoRace(t *testing.T) {
 	}
 }
 
+// TestCreate_StoresClientIP verifies opts.ClientIP is persisted on the
+// session row written by Manager.Create.
+func TestCreate_StoresClientIP(t *testing.T) {
+	db := mustOpenDB(t)
+	uid := mustCreateUser(t, db, "alice")
+	factory, _ := newFakeFactory(t)
+	mgr := NewManager(db, factory)
+
+	opts := pty.Options{Cwd: "/tmp", ClientIP: "198.51.100.42", Username: "alice"}
+	id, _, err := mgr.Create("alice", uid, "/tmp", envStub, opts)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	rows, err := db.ListSessionsForUser(uid)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	var found *store.Session
+	for i := range rows {
+		if rows[i].ID == id {
+			found = &rows[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("session row not found")
+	}
+	if found.ClientIP != "198.51.100.42" {
+		t.Errorf("ClientIP = %q, want 198.51.100.42", found.ClientIP)
+	}
+}
+
 // TestCreateReapsNaturalExit verifies the cap-drift fix: when the PTY process
 // exits on its own (user typed `exit`, claude quit, …), the OnExit callback
 // registered by Create must (1) mark the DB row alive=0, (2) remove the entry

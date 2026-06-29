@@ -227,7 +227,7 @@ func createAliveSession(t *testing.T, s *testServer, username string) (string, *
 	if err != nil {
 		t.Fatalf("get %s: %v", username, err)
 	}
-	p, sid, status := s.ensureSession(u, "")
+	p, sid, status := s.ensureSession(u, "", httptest.NewRequest("GET", "/", nil))
 	if status != 200 {
 		t.Fatalf("ensureSession status=%d, want 200", status)
 	}

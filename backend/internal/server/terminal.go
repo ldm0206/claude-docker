@@ -52,7 +52,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	// status codes (404 unknown session, 409 cap reached). After the upgrade we
 	// can only close the socket.
 	sid := r.URL.Query().Get("session")
-	p, effSID, status := s.ensureSession(u, sid)
+	p, effSID, status := s.ensureSession(u, sid, r)
 	if status != http.StatusOK {
 		http.Error(w, http.StatusText(status), status)
 		return

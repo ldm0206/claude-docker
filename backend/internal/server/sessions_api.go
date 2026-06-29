@@ -41,6 +41,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Cols:     80,
 		Rows:     24,
 		Username: u.Username,
+		ClientIP: s.clientIP(r),
 	}
 
 	sid, p, err := s.sess.Create(u.Username, u.ID, "/home/"+u.Username+"/workspace", envFactory, opts)

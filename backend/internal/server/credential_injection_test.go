@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -113,7 +114,7 @@ func TestCredInject_BoundPresetPopulatesEnv(t *testing.T) {
 		t.Fatalf("reload alice: %v", err)
 	}
 
-	p, _, status := s.ensureSession(alice, "")
+	p, _, status := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	if status != 200 {
 		t.Fatalf("ensureSession status=%d, want 200", status)
 	}
@@ -160,7 +161,7 @@ func TestCredInject_NoPresetMeansNoAnthropicFromCredEnv(t *testing.T) {
 	}
 	// No preset bound.
 
-	p, _, status := s.ensureSession(alice, "")
+	p, _, status := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	if status != 200 {
 		t.Fatalf("ensureSession status=%d, want 200", status)
 	}
@@ -207,7 +208,7 @@ func TestCredInject_CorruptBlobIsGraceful(t *testing.T) {
 	}
 	alice, _ = s.db.GetUserByID(alice.ID)
 
-	pty2, _, status := s.ensureSession(alice, "")
+	pty2, _, status := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	if status != 200 {
 		t.Fatalf("corrupt blob should NOT fail session create; got status=%d", status)
 	}
@@ -240,7 +241,7 @@ func TestCredInject_NoMasterKeyIsGraceful(t *testing.T) {
 	}
 	alice, _ = s.db.GetUserByID(alice.ID)
 
-	pty2, _, status := s.ensureSession(alice, "")
+	pty2, _, status := s.ensureSession(alice, "", httptest.NewRequest("GET", "/", nil))
 	if status != 200 {
 		t.Fatalf("nil masterKey should not fail session create; got status=%d", status)
 	}

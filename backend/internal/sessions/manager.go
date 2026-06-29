@@ -145,6 +145,7 @@ func (m *Manager) Create(username string, userID int, cwd string, env EnvFactory
 		StartedAt:  now,
 		LastSeenAt: now,
 		Alive:      true,
+		ClientIP:   opts.ClientIP,
 	}); err != nil {
 		return "", nil, fmt.Errorf("persist session: %w", err)
 	}
