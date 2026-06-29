@@ -23,7 +23,7 @@ An isolated, browser-accessible Claude Code environment for **multiple users**, 
 - **Multi-user identity**: username + password (argon2id), first-login change, admin/user roles, bootstrap admin.
 - **Per-user isolation**: each user gets a Linux system account, separate `/home/<user>/workspace` + `/data/<user>/claude-config`, `gosu`-dropped PTY.
 - **Persistent multi-session terminals**: detach (close browser) → resume; session cap per user.
-- **Web file manager**: in-browser browse/upload/download/edit over each user's `~/workspace` (no external SFTP client needed).
+- **Web file manager**: in-browser browse/upload/download/edit over each user's `~/workspace` (no external file transfer client needed).
 - **Quotas**: soft disk quota (`du` monitor + panel) + cgroup v2 CPU/memory (per role template).
 - **Traffic**: nftables cgroup counters → monthly up/down per user (requires `CAP_NET_ADMIN`).
 - **Credential presets**: AES-256-GCM-encrypted Anthropic credentials, reusable across users, rotatable.
