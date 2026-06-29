@@ -7,8 +7,7 @@ import (
 )
 
 // Session is the persisted metadata row for one terminal session. It is distinct
-// from the live PTY process (owned by sessions.Manager): a row may exist with
-// Alive=false after the PTY has exited, for history/listing.
+// from the live PTY process (owned by sessions.Manager) — the DB does not auto-generate it.
 type Session struct {
 	ID         string
 	UserID     int
@@ -16,15 +15,16 @@ type Session struct {
 	StartedAt  int64
 	LastSeenAt int64
 	Alive      bool
+	ClientIP   string
 }
 
 // CreateSession inserts a session row. The caller generates the id (crypto/rand
 // in sessions.Manager) — the DB does not auto-generate it.
 func (d *DB) CreateSession(s Session) error {
 	_, err := d.sql.Exec(
-		`INSERT INTO sessions (id, user_id, name, started_at, last_seen_at, alive)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		s.ID, s.UserID, s.Name, s.StartedAt, s.LastSeenAt, btoi(s.Alive),
+		`INSERT INTO sessions (id, user_id, name, started_at, last_seen_at, alive, client_ip)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.UserID, s.Name, s.StartedAt, s.LastSeenAt, btoi(s.Alive), s.ClientIP,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -35,12 +35,12 @@ func (d *DB) CreateSession(s Session) error {
 // GetSession returns one session row by id. Returns ErrNotFound if absent.
 func (d *DB) GetSession(id string) (Session, error) {
 	row := d.sql.QueryRow(
-		`SELECT id, user_id, name, started_at, last_seen_at, alive FROM sessions WHERE id = ?`,
+		`SELECT id, user_id, name, started_at, last_seen_at, alive, client_ip FROM sessions WHERE id = ?`,
 		id,
 	)
 	var s Session
 	var alive int
-	err := row.Scan(&s.ID, &s.UserID, &s.Name, &s.StartedAt, &s.LastSeenAt, &alive)
+	err := row.Scan(&s.ID, &s.UserID, &s.Name, &s.StartedAt, &s.LastSeenAt, &alive, &s.ClientIP)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, ErrNotFound
 	}
@@ -55,8 +55,8 @@ func (d *DB) GetSession(id string) (Session, error) {
 // user, ordered oldest-first. Used to populate the session list UI.
 func (d *DB) ListSessionsForUser(userID int) ([]Session, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, user_id, name, started_at, last_seen_at, alive FROM sessions
-		 WHERE user_id = ? ORDER BY started_at ASC, id ASC`,
+		`SELECT id, user_id, name, started_at, last_seen_at, alive, client_ip FROM sessions
+			 WHERE user_id = ? ORDER BY started_at ASC, id ASC`,
 		userID,
 	)
 	if err != nil {
@@ -67,7 +67,7 @@ func (d *DB) ListSessionsForUser(userID int) ([]Session, error) {
 	for rows.Next() {
 		var s Session
 		var alive int
-		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.StartedAt, &s.LastSeenAt, &alive); err != nil {
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.StartedAt, &s.LastSeenAt, &alive, &s.ClientIP); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		s.Alive = alive == 1

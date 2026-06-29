@@ -95,6 +95,27 @@ func TestBindCredential(t *testing.T) {
 	}
 }
 
+// TestTouchLogin_RecordsIP verifies TouchLogin now persists last_login_ip.
+func TestTouchLogin_RecordsIP(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	u := helperCreateUser(t, db, "alice")
+	if err := db.TouchLogin(u.ID, 1700000000, "203.0.113.9"); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	got, err := db.GetUserByID(u.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.LastLoginIP != "203.0.113.9" {
+		t.Errorf("LastLoginIP = %q, want 203.0.113.9", got.LastLoginIP)
+	}
+}
+
 func TestEffectiveMaxSessions(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

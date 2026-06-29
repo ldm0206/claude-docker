@@ -28,6 +28,41 @@ func TestCreateAndGetSession(t *testing.T) {
 	}
 }
 
+// TestCreateSession_StoresClientIP verifies CreateSession persists client_ip and
+// ListSessionsForUser returns it.
+func TestCreateSession_StoresClientIP(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	u, _ := db.GetUserByUsername("alice")
+	if u.ID == 0 {
+		u = helperCreateUser(t, db, "alice")
+	}
+	s := Session{ID: "sess-ip-1", UserID: u.ID, Name: "alice", StartedAt: 1, LastSeenAt: 1, Alive: true, ClientIP: "198.51.100.7"}
+	if err := db.CreateSession(s); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	list, err := db.ListSessionsForUser(u.ID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found *Session
+	for i := range list {
+		if list[i].ID == "sess-ip-1" {
+			found = &list[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("session not listed")
+	}
+	if found.ClientIP != "198.51.100.7" {
+		t.Errorf("ClientIP = %q, want 198.51.100.7", found.ClientIP)
+	}
+}
+
 func TestGetSessionNotFound(t *testing.T) {
 	db, _ := Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()

@@ -74,7 +74,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 403, map[string]any{"error": "suspended"})
 		return
 	}
-	_ = s.db.TouchLogin(u.ID, time.Now().Unix())
+	_ = s.db.TouchLogin(u.ID, time.Now().Unix(), "") // TODO T4: real IP via s.clientIP(r)
 	// Plan 3: sessions are per-request now — there is no single shared PTY to
 	// retarget. Login ONLY sets the cookie; the WS handler creates/attaches a
 	// session scoped to this user via the sessions.Manager on connect.
