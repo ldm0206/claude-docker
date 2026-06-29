@@ -114,6 +114,7 @@ function renderSidebar() {
     ["credentials", " Credentials"],
     ["templates", " Templates"],
     ["captures", " Captures"],
+    ["audit", " Audit"],
   ];
   sb.innerHTML = "";
   sb.appendChild(el("div", { class: "brand" }, "✦ Claude"));
@@ -141,7 +142,7 @@ function themeToggle() {
   return wrap;
 }
 
-const TITLES = { terminal: "Terminal", files: "Files", traffic: "Traffic", users: "Users", credentials: "Credentials", templates: "Templates", captures: "Captures" };
+const TITLES = { terminal: "Terminal", files: "Files", traffic: "Traffic", users: "Users", credentials: "Credentials", templates: "Templates", captures: "Captures", audit: "Audit" };
 function nav(view) {
   current = view;
   document.getElementById("title").textContent = TITLES[view] || view;
@@ -160,6 +161,7 @@ VIEWS.users = viewAdminUsers;
 VIEWS.credentials = viewCredentials;
 VIEWS.templates = viewTemplates;
 VIEWS.captures = (elRoot) => mountCaptures(elRoot);
+VIEWS.audit = viewAudit;
 
 // ---------------------------------------------------------------------------
 // View: Terminal
@@ -195,7 +197,7 @@ async function refreshTraffic(root) {
     const alive = sess.filter(s => s.alive).length;
     meters.innerHTML = `<div class="meter">Sessions <b>${sess.length}</b></div><div class="meter">Alive <b>${alive}</b></div>`;
   } catch { meters.innerHTML = `<span class="muted">—</span>`; }
-  trows.innerHTML = `<span class="muted">Per-user traffic details are visible to admins on the Users page. Your SFTP/terminal transfers are counted toward your monthly quota.</span>`;
+  trows.innerHTML = `<span class="muted">Per-user traffic details are visible to admins on the Users page. Your terminal and file-manager transfers are counted toward your monthly quota.</span>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +206,7 @@ async function refreshTraffic(root) {
 async function viewAdminUsers(root) {
   root.innerHTML = `<div class="row"><span class="grow"></span><button class="btn" id="add-user">+ New user</button></div>
     <div class="card" style="margin-top:12px;overflow:auto"><table class="tbl"><thead><tr>
-      <th>User</th><th>Role</th><th>Status</th><th>Disk</th><th>Traffic</th><th>Sessions</th><th></th>
+      <th>User</th><th>Role</th><th>Status</th><th>Disk</th><th>Traffic</th><th>Sessions</th><th>Last login</th><th></th>
     </tr></thead><tbody id="utbody"></tbody></table></div>`;
   document.getElementById("add-user").onclick = () => userModal(null, () => viewAdminUsers(root));
   await refreshUsers();
@@ -219,7 +221,7 @@ async function refreshUsers() {
   for (const u of users) {
     const tr = document.createElement("tr");
     const status = u.suspended ? '<span class="pill suspended">suspended</span>' : '<span class="pill online">active</span>';
-    tr.innerHTML = `<td><b>${esc(u.username)}</b></td><td><span class="pill ${u.role==='admin'?'admin':''}">${u.role}</span></td><td>${status}</td><td class="muted" id="d-${u.id}">—</td><td class="muted" id="t-${u.id}">—</td><td class="muted" id="s-${u.id}">—</td>`;
+    tr.innerHTML = `<td><b>${esc(u.username)}</b></td><td><span class="pill ${u.role==='admin'?'admin':''}">${u.role}</span></td><td>${status}</td><td class="muted" id="d-${u.id}">—</td><td class="muted" id="t-${u.id}">—</td><td class="muted" id="s-${u.id}">—</td><td class="muted" id="ll-${u.id}">—</td>`;
     const act = document.createElement("td");
     const btnS = document.createElement("button");
     btnS.className = "btn tiny " + (u.suspended ? "ghost" : "danger");
@@ -237,6 +239,11 @@ async function refreshUsers() {
       const t = document.getElementById(`t-${u.id}`); if (t) t.textContent = "↓" + fmtBytes(us.traffic.rx) + " ↑" + fmtBytes(us.traffic.tx);
       const s = document.getElementById(`s-${u.id}`); if (s) s.textContent = `${us.sessions.alive}/${us.sessions.total}`;
     }).catch(() => {});
+    const ll = document.getElementById(`ll-${u.id}`);
+    if (ll) {
+      const when = (u.lastLoginAt && u.lastLoginAt > 0) ? new Date(u.lastLoginAt * 1000).toLocaleString() : "never";
+      ll.innerHTML = esc(when) + (u.lastLoginIp ? ` <span class="faint tiny">${esc(u.lastLoginIp)}</span>` : "");
+    }
   }
 }
 
@@ -346,6 +353,29 @@ function tplModal() {
     if (r.ok) { overlay.remove(); refreshTpls(); }
     else overlay.querySelector("#te").textContent = "Failed (" + r.status + ")";
   };
+}
+
+// ---------------------------------------------------------------------------
+// View: Admin — Audit (login-events stream)
+// ---------------------------------------------------------------------------
+async function viewAudit(root) {
+  root.innerHTML = `<div class="card" style="overflow:auto"><table class="tbl"><thead><tr>
+    <th>Time</th><th>User</th><th>IP</th><th>Result</th><th>User-Agent</th>
+    </tr></thead><tbody id="abody"></tbody></table></div>`;
+  const tb = document.getElementById("abody");
+  let events = [];
+  try { events = await getJson("/api/admin/login-events?limit=200"); } catch {}
+  tb.innerHTML = "";
+  for (const e of events) {
+    const tr = document.createElement("tr");
+    const when = e.at ? new Date(e.at * 1000).toLocaleString() : "—";
+    const result = e.success
+      ? '<span class="pill online">ok</span>'
+      : '<span class="pill suspended">fail</span>';
+    tr.innerHTML = `<td class="muted">${esc(when)}</td><td><b>${esc(e.username)}</b></td><td class="muted">${esc(e.ip || "—")}</td><td>${result}</td><td class="muted tiny">${esc((e.userAgent || "—").slice(0, 60))}</td>`;
+    tb.appendChild(tr);
+  }
+  if (!events.length) tb.innerHTML = `<tr><td class="muted" colspan="5">No login events yet.</td></tr>`;
 }
 
 // --- helpers ---
