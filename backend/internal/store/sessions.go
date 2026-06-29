@@ -35,7 +35,7 @@ func (d *DB) CreateSession(s Session) error {
 // GetSession returns one session row by id. Returns ErrNotFound if absent.
 func (d *DB) GetSession(id string) (Session, error) {
 	row := d.sql.QueryRow(
-		`SELECT id, user_id, name, started_at, last_seen_at, alive, client_ip FROM sessions WHERE id = ?`,
+		`SELECT id, user_id, name, started_at, last_seen_at, alive, COALESCE(client_ip, '') AS client_ip FROM sessions WHERE id = ?`,
 		id,
 	)
 	var s Session
@@ -55,7 +55,7 @@ func (d *DB) GetSession(id string) (Session, error) {
 // user, ordered oldest-first. Used to populate the session list UI.
 func (d *DB) ListSessionsForUser(userID int) ([]Session, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, user_id, name, started_at, last_seen_at, alive, client_ip FROM sessions
+		`SELECT id, user_id, name, started_at, last_seen_at, alive, COALESCE(client_ip, '') AS client_ip FROM sessions
 			 WHERE user_id = ? ORDER BY started_at ASC, id ASC`,
 		userID,
 	)
