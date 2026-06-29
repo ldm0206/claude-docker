@@ -64,3 +64,4 @@ See `DEPLOY-TEST.md` for a comprehensive checklist of Linux-runtime items to ver
 - The debug-capture CA is trusted only inside the container.
 - Credentials encrypted at rest; plaintext only in the PTY process env.
 - Session cookies are `Secure` + `SameSite=None` by default (HTTPS). For local `http://localhost` dev set `COOKIE_SAMESITE=lax`.
+- Login timing equalized (decoy argon2) to prevent user enumeration.
