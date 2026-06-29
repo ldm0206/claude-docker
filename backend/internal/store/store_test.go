@@ -76,4 +76,7 @@ func TestOpen_AlterColumnsIdempotent(t *testing.T) {
 	if _, err := db2.sql.Exec(`UPDATE users SET last_login_ip = ? WHERE id = -1`, "5.6.7.8"); err != nil {
 		t.Fatalf("last_login_ip unusable after re-open: %v", err)
 	}
+	if _, err := db2.sql.Exec(`UPDATE sessions SET client_ip = ? WHERE id = 'none'`, "5.6.7.8"); err != nil {
+		t.Fatalf("client_ip unusable after re-open: %v", err)
+	}
 }
