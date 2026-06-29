@@ -49,3 +49,14 @@ CREATE TABLE IF NOT EXISTS traffic (
   tx_bytes INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, year_month)
 );
+
+CREATE TABLE IF NOT EXISTS login_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,   -- 0 when the username does not exist
+  username TEXT NOT NULL,     -- the attempted username (audited even if no row)
+  ip TEXT,
+  user_agent TEXT,
+  success INTEGER NOT NULL,   -- 1 success / 0 failure
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_events_at ON login_events(at DESC);
