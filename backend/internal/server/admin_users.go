@@ -120,10 +120,12 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, _ *http.Request) {
 	out := make([]map[string]any, len(users))
 	for i, u := range users {
 		out[i] = map[string]any{
-			"id":         u.ID,
-			"username":   u.Username,
-			"role":       u.Role,
-			"suspended":  u.Suspended,
+			"id":           u.ID,
+			"username":     u.Username,
+			"role":         u.Role,
+			"suspended":    u.Suspended,
+			"lastLoginIp":  u.LastLoginIP,
+			"lastLoginAt":  u.LastLoginAt,
 		}
 	}
 	writeJSON(w, 200, out)

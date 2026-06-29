@@ -38,6 +38,7 @@ func (s *Server) handleAdminListSessions(w http.ResponseWriter, r *http.Request)
 			"startedAt":  s.StartedAt,
 			"lastSeenAt": s.LastSeenAt,
 			"alive":      s.Alive,
+			"clientIp":   s.ClientIP,
 		}
 	}
 	writeJSON(w, 200, out)

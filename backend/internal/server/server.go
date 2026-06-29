@@ -343,6 +343,8 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/api/admin/users/{id}/usage", s.handleAdminUsage)
 			r.Get("/api/admin/traffic", s.handleAdminTraffic)
 			r.Post("/api/admin/users/{id}/reset-traffic", s.handleAdminResetTraffic)
+			// Admin login-audit endpoint (T6): newest-first login events.
+			r.Get("/api/admin/login-events", s.handleAdminLoginEvents)
 			// Admin session-management endpoints (T6)
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
