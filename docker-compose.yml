@@ -4,7 +4,6 @@ services:
     image: ghcr.io/ldm0206/claude-docker:latest
     ports:
       - "8080:8080"   # HTTP (web UI + API)
-      - "22:22"       # SSH/SFTP (configurable via SFTP_PORT)
     env_file: .env
     # NET_ADMIN: nftables per-user traffic accounting only. No --privileged,
     # no Docker socket. Server runs as root inside the container (required for

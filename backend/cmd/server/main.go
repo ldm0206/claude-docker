@@ -19,7 +19,6 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/secrets"
 	ser "github.com/ldm0206/claude-docker/backend/internal/server"
 	"github.com/ldm0206/claude-docker/backend/internal/sessions"
-	sshserver "github.com/ldm0206/claude-docker/backend/internal/ssh"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
 	"github.com/ldm0206/claude-docker/backend/internal/traffic"
@@ -72,13 +71,6 @@ func main() {
 		log.Printf("[server] warning: nft not found — traffic accounting in no-op mode (%v)", err)
 	}
 
-	// --- Embedded SSH/SFTP server (Linux runtime). No-op Start off-Linux. ---
-	sftpPort := os.Getenv("SFTP_PORT")
-	if sftpPort == "" {
-		sftpPort = "22"
-	}
-	sshSrv := sshserver.New(db, ":"+sftpPort)
-
 	// --- Capture: admin-only, per-session MITM (Linux runtime). The real
 	// MITMRunner is built from the CA the entrypoint generates + installs into
 	// the trust store; the proxy starts LAZILY on the first admin enable
@@ -100,11 +92,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go tsvc.Start(ctx, 5*time.Second)
-	go func() {
-		if err := sshSrv.Start(ctx); err != nil {
-			log.Printf("[server] ssh/sftp: %v", err)
-		}
-	}()
 
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {
