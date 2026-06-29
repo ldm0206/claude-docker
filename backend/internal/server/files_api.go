@@ -94,7 +94,7 @@ func (s *Server) handleFilesDownload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "stat failed"})
 		return
 	}
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(rel)+"\"")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+safeFilename(rel)+"\"")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 	n, _ := io.Copy(w, f)
@@ -221,4 +221,20 @@ func (s *Server) handleFilesDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// safeFilename slashes/strips CR/LF and double-quotes so a malicious name can't
+// break Content-Disposition quoting or inject header bytes via CRLF.
+func safeFilename(rel string) string {
+	base := filepath.Base(rel)
+	if base == "." || base == "/" {
+		return "download"
+	}
+	for _, bad := range []string{"\r", "\n", `"`} {
+		base = strings.ReplaceAll(base, bad, "")
+	}
+	if base == "" {
+		return "download"
+	}
+	return base
 }

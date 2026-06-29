@@ -74,6 +74,17 @@ export function mountFiles(root) {
         tr.querySelector(".fname").style.cursor = "pointer";
         tr.querySelector(".fname").onclick = () => { cwd = cwd ? cwd+"/"+e.name : e.name; refresh(); };
       }
+      const full = cwd ? cwd + "/" + e.name : e.name;
+      const rn = document.createElement("button");
+      rn.className = "btn tiny ghost"; rn.textContent = "⤴"; rn.title = "Rename";
+      rn.onclick = async () => {
+        const name = prompt("Rename to", e.name);
+        if (!name || name === e.name) return;
+        const r = await postJson("/api/files/rename", { from: full, to: cwd ? cwd + "/" + name : name });
+        if (r.ok) refresh();
+        else alert("Rename failed (" + r.status + ")");
+      };
+      act.appendChild(rn);
       const rm = document.createElement("button");
       rm.className = "btn tiny danger"; rm.textContent = "✕";
       rm.onclick = async () => {
