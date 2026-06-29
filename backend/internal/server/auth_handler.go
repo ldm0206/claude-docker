@@ -51,30 +51,47 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad body"})
 		return
 	}
+	ip := s.clientIP(r)
+	ua := truncateUA(r.Header.Get("User-Agent"))
+	now := time.Now().Unix()
 	u, err := s.db.GetUserByUsername(b.Username)
 	if errors.Is(err, store.ErrNotFound) {
 		// Missing user: run a decoy argon2id verify so this path takes the
 		// same time as a wrong-password path, defeating user enumeration via
 		// response timing. Result is discarded; identical 401 is returned.
 		auth.CheckPasswordDecoy(b.Password)
+		_ = s.db.CreateLoginEvent(store.LoginEvent{
+			UserID: 0, Username: b.Username, IP: ip, UserAgent: ua, Success: false, At: now,
+		})
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
 	if err != nil {
 		// Any other DB error: same decoy, same uniform 401.
 		auth.CheckPasswordDecoy(b.Password)
+		_ = s.db.CreateLoginEvent(store.LoginEvent{
+			UserID: 0, Username: b.Username, IP: ip, UserAgent: ua, Success: false, At: now,
+		})
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
 	if !auth.CheckPassword(b.Password, u.PasswordHash) {
+		_ = s.db.CreateLoginEvent(store.LoginEvent{
+			UserID: u.ID, Username: b.Username, IP: ip, UserAgent: ua, Success: false, At: now,
+		})
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
 	if u.Suspended {
+		// Credentials were valid; the account is just locked. Audit as a
+		// success so the lockout is distinguishable from a wrong password.
+		_ = s.db.CreateLoginEvent(store.LoginEvent{
+			UserID: u.ID, Username: u.Username, IP: ip, UserAgent: ua, Success: true, At: now,
+		})
 		writeJSON(w, 403, map[string]any{"error": "suspended"})
 		return
 	}
-	_ = s.db.TouchLogin(u.ID, time.Now().Unix(), "") // TODO T4: real IP via s.clientIP(r)
+	_ = s.db.TouchLogin(u.ID, now, ip)
 	// Plan 3: sessions are per-request now — there is no single shared PTY to
 	// retarget. Login ONLY sets the cookie; the WS handler creates/attaches a
 	// session scoped to this user via the sessions.Manager on connect.
@@ -88,7 +105,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, cookie)
+	_ = s.db.CreateLoginEvent(store.LoginEvent{
+		UserID: u.ID, Username: u.Username, IP: ip, UserAgent: ua, Success: true, At: now,
+	})
 	writeJSON(w, 200, map[string]any{"role": u.Role, "mustChangePassword": u.MustChangePassword})
+}
+
+// truncateUA caps the User-Agent string at 256 bytes so the login_events
+// user_agent column stays bounded. A byte-slice truncation is safe here: the
+// column is opaque text and a truncated UTF-8 sequence is acceptable for an
+// audit log (we prioritize a bounded store over rune-boundary correctness).
+func truncateUA(s string) string {
+	if len(s) > 256 {
+		return s[:256]
+	}
+	return s
 }
 
 type changePwReq struct {

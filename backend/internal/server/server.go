@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 
@@ -374,6 +375,27 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: s.sameSiteMode()})
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// clientIP returns the originating client IP for r. Priority: CF-Connecting-IP
+// (Cloudflare-injected, trusted because the deployment transits CF+nginx and
+// the container's 8080 port is private) > X-Real-IP > first hop of
+// X-Forwarded-For > RemoteAddr host.
+func (s *Server) clientIP(r *http.Request) string {
+	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
+		return v
+	}
+	if v := r.Header.Get("X-Real-IP"); v != "" {
+		return v
+	}
+	if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		return strings.TrimSpace(strings.Split(v, ",")[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // handleState returns the minimal client-facing state. Plan 3 dropped

@@ -483,3 +483,78 @@ func TestAuthWSUserRejectsSuspended(t *testing.T) {
 // Compile-time guard: fakePTY must satisfy sessions.PTY so the injected
 // factory stays valid if the interface drifts.
 var _ sessions.PTY = (*fakePTY)(nil)
+
+// TestClientIP_Priority verifies CF-Connecting-IP wins over X-Real-IP,
+// X-Forwarded-For, and RemoteAddr.
+func TestClientIP_Priority(t *testing.T) {
+	s := newTestServer(t)
+	cases := []struct {
+		name   string
+		headers map[string]string
+		remote string
+		want   string
+	}{
+		{"cf", map[string]string{"CF-Connecting-IP": "1.1.1.1"}, "9.9.9.9:1", "1.1.1.1"},
+		{"xreal", map[string]string{"X-Real-IP": "2.2.2.2"}, "9.9.9.9:1", "2.2.2.2"},
+		{"xff", map[string]string{"X-Forwarded-For": "3.3.3.3, 8.8.8.8"}, "9.9.9.9:1", "3.3.3.3"},
+		{"remote", map[string]string{}, "9.9.9.9:1234", "9.9.9.9"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/health", nil)
+			req.RemoteAddr = c.remote
+			for k, v := range c.headers {
+				req.Header.Set(k, v)
+			}
+			if got := s.clientIP(req); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestLogin_WritesAuditEvent verifies a successful login writes a login_event
+// (success=1) and updates last_login_ip; a failed login writes success=0 with
+// the attempted username even for an unknown user.
+func TestLogin_WritesAuditEvent(t *testing.T) {
+	s := newTestServer(t)
+
+	// Successful login.
+	req := httptest.NewRequest("POST", "/auth", strings.NewReader(`{"username":"alice","password":"pw123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("login: %d", w.Code)
+	}
+	u, _ := s.db.GetUserByUsername("alice")
+	if u.LastLoginIP != "203.0.113.10" {
+		t.Errorf("LastLoginIP = %q, want 203.0.113.10", u.LastLoginIP)
+	}
+	evs, err := s.db.ListLoginEvents(10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(evs) != 1 || !evs[0].Success || evs[0].IP != "203.0.113.10" {
+		t.Fatalf("event mismatch: %+v", evs)
+	}
+
+	// Failed login for unknown user → success=0, username recorded, user_id 0.
+	req2 := httptest.NewRequest("POST", "/auth", strings.NewReader(`{"username":"ghost","password":"x"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("CF-Connecting-IP", "203.0.113.11")
+	w2 := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w2, req2)
+	if w2.Code != 401 {
+		t.Fatalf("want 401, got %d", w2.Code)
+	}
+	evs2, _ := s.db.ListLoginEvents(10)
+	if len(evs2) != 2 {
+		t.Fatalf("want 2 events, got %d", len(evs2))
+	}
+	fail := evs2[0] // newest first
+	if fail.Success || fail.Username != "ghost" || fail.UserID != 0 || fail.IP != "203.0.113.11" {
+		t.Errorf("fail event mismatch: %+v", fail)
+	}
+}
