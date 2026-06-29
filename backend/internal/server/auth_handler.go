@@ -92,6 +92,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.db.TouchLogin(u.ID, now, ip)
+	_ = s.db.CreateLoginEvent(store.LoginEvent{
+		UserID: u.ID, Username: u.Username, IP: ip, UserAgent: ua, Success: true, At: now,
+	})
 	// Plan 3: sessions are per-request now — there is no single shared PTY to
 	// retarget. Login ONLY sets the cookie; the WS handler creates/attaches a
 	// session scoped to this user via the sessions.Manager on connect.
@@ -105,9 +108,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, cookie)
-	_ = s.db.CreateLoginEvent(store.LoginEvent{
-		UserID: u.ID, Username: u.Username, IP: ip, UserAgent: ua, Success: true, At: now,
-	})
 	writeJSON(w, 200, map[string]any{"role": u.Role, "mustChangePassword": u.MustChangePassword})
 }
 
