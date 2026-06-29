@@ -28,7 +28,7 @@ func TestEnsureProvisionsMissingAccount(t *testing.T) {
 		_ = LinuxAccountProvisioner{}.Delete(name)
 	}()
 
-	if err := LinuxAccountProvisioner{}.Ensure(name, uid); err != nil {
+	if err := (LinuxAccountProvisioner{}).Ensure(name, uid); err != nil {
 		t.Fatalf("Ensure missing account: %v", err)
 	}
 	if _, err := user.Lookup(name); err != nil {
@@ -58,10 +58,10 @@ func TestEnsureIdempotentOnExistingAccount(t *testing.T) {
 		_ = LinuxAccountProvisioner{}.Delete(name)
 	}()
 
-	if err := LinuxAccountProvisioner{}.Ensure(name, uid); err != nil {
+	if err := (LinuxAccountProvisioner{}).Ensure(name, uid); err != nil {
 		t.Fatalf("first Ensure: %v", err)
 	}
-	if err := LinuxAccountProvisioner{}.Ensure(name, uid); err != nil {
+	if err := (LinuxAccountProvisioner{}).Ensure(name, uid); err != nil {
 		t.Fatalf("second Ensure (must be idempotent): %v", err)
 	}
 }
