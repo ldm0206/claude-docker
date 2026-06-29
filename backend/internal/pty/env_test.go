@@ -59,16 +59,13 @@ func TestBuildUserEnv(t *testing.T) {
 		NoProxy:            "localhost,127.0.0.1",
 		APITimeoutMS:       300000,
 	}
-	credEnv := map[string]string{
-		"ANTHROPIC_AUTH_TOKEN": "user-secret-token",
-	}
-	env := BuildUserEnv(cfg, "alice", "/data/alice/claude-config", credEnv)
+	env := BuildUserEnv(cfg, "alice", "/data/alice/claude-config")
 	j := strings.Join(env, "\n")
 
 	for _, want := range []string{
 		"HOME=/home/alice",
 		"CLAUDE_CONFIG_DIR=/data/alice/claude-config",
-		"ANTHROPIC_AUTH_TOKEN=user-secret-token",
+		"ANTHROPIC_AUTH_TOKEN=tok",
 		"ANTHROPIC_BASE_URL=http://gw",
 		"HTTP_PROXY=http://p:7890",
 		"http_proxy=http://p:7890",

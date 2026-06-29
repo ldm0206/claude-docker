@@ -13,7 +13,6 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
 	"github.com/ldm0206/claude-docker/backend/internal/quota"
-	"github.com/ldm0206/claude-docker/backend/internal/secrets"
 	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
 	"github.com/ldm0206/claude-docker/backend/internal/system"
@@ -78,11 +77,11 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 }
 
 // buildUserEnvFactory returns an EnvFactory that resolves the per-user env
-// slice lazily at PTY spawn time. It decrypts the user's bound credential
-// preset (if any) and passes the non-empty secret fields as credEnv, which
-// BuildUserEnv applies LAST so they override any inherited/cfg value. Returning
-// a function (not a precomputed slice) lets credential rotation take effect on
-// the next Create without restarting the server.
+// slice lazily at PTY spawn time. It first syncs the operator's shared
+// credential files into the user's claude-config dir (non-fatal on failure),
+// then builds the env. Returning a function (not a precomputed slice) lets a
+// re-login take effect on the next Create/Restart without restarting the
+// server.
 //
 // P5-T3 — env routing: the factory ALSO consults the per-session capture flag
 // (capture.IsEnabled(sessionID)) and, when on, rewrites the returned env so
@@ -90,21 +89,14 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 //   - sets HTTP_PROXY / HTTPS_PROXY (+lower) = capture.ProxyURL();
 //   - REMOVES ALL_PROXY / all_proxy so claude doesn't bypass the proxy via SOCKS.
 //
-// The routing is applied POST BuildUserEnv at this server layer (BuildUserEnv
-// stays pure / cfg-driven), by filtering the []string it returns. The real
-// *pty.Manager calls opts.Env() on every Start, so a Manager.Restart re-invokes
-// this closure and picks up a flag flip without a server restart.
-//
-// SECURITY: the decrypted credential lives ONLY in the returned []string (which
-// becomes exec.Cmd.Env). It is never logged, never persisted, never returned.
-// Decryption failures (corrupt blob, rotated MASTER_KEY) are logged at WARNING
-// level and treated as "no credential" — the session still starts, just without
-// the injected env. Failing the session over a corrupt credential would lock a
-// user out of their only path to recovery.
+// SECURITY: the shared credential file is copied onto disk under the user's
+// own claude-config (0600, user-owned). It is never logged.
 func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
 	return func(_ string, sessionID string) []string {
-		credEnv := s.resolveCredEnv(u)
-		env := pty.BuildUserEnv(s.cfg, u.Username, "/data/"+u.Username+"/claude-config", credEnv)
+		if err := system.SyncSharedCredentials(u.Username, u.UID); err != nil {
+			log.Printf("[server] warning: sync shared credentials for %s: %v", u.Username, err)
+		}
+		env := pty.BuildUserEnv(s.cfg, u.Username, "/data/"+u.Username+"/claude-config")
 		return s.applyCaptureRouting(env, sessionID)
 	}
 }
@@ -150,75 +142,6 @@ func (s *Server) applyCaptureRouting(env []string, sessionID string) []string {
 		"https_proxy="+proxyURL,
 	)
 	return filtered
-}
-
-// resolveCredEnv decrypts the user's bound credential preset and returns it as
-// the credEnv map BuildUserEnv consumes. Returns nil (and logs) when there is
-// no bound preset, no masterKey, or the blob is corrupt/undecryptable. The
-// returned map carries ONLY the non-empty fields, keyed the same way
-// BuildClaudeEnv/BuildUserEnv key them (ANTHROPIC_*, plus the proxy pairs in
-// BOTH upper and lower case — matching the convention tools like curl/claude
-// expect).
-//
-// This is the ONLY place in the codebase where a sealed preset is opened; it is
-// deliberately not exposed via any HTTP endpoint.
-func (s *Server) resolveCredEnv(u store.User) map[string]string {
-	if !u.CredentialPresetID.Valid {
-		return nil
-	}
-	if s.masterKey == nil {
-		// T9 wires the real key; until then bound presets simply have no effect.
-		// Not an error — the session still works, just without injected creds.
-		return nil
-	}
-	preset, err := s.db.GetPreset(int(u.CredentialPresetID.Int64))
-	if err != nil {
-		// Preset was deleted after binding (rare but possible). Log and proceed
-		// without credentials rather than failing the session.
-		log.Printf("[server] warning: credential preset %d for user %s not found: %v",
-			u.CredentialPresetID.Int64, u.Username, err)
-		return nil
-	}
-	var creds credentialSecretFields
-	if err := secrets.OpenJSON(s.masterKey, preset.EncryptedBlob, &creds); err != nil {
-		// Corrupt blob or rotated MASTER_KEY. DO NOT fail the session — log and
-		// fall back to no injected credentials (cfg/inherited env still apply).
-		log.Printf("[server] warning: failed to decrypt credential preset %d for user %s: %v",
-			u.CredentialPresetID.Int64, u.Username, err)
-		return nil
-	}
-	return credEnvFromSecrets(creds)
-}
-
-// credEnvFromSecrets translates the decrypted secret struct into the env map
-// BuildUserEnv consumes. Empty fields are omitted (so an inherited/cfg value is
-// left untouched rather than blanked). Proxies are emitted in BOTH cases to
-// match the BuildClaudeEnv convention.
-func credEnvFromSecrets(c credentialSecretFields) map[string]string {
-	env := make(map[string]string, 8)
-	if c.APIKey != "" {
-		env["ANTHROPIC_API_KEY"] = c.APIKey
-	}
-	if c.AuthToken != "" {
-		env["ANTHROPIC_AUTH_TOKEN"] = c.AuthToken
-	}
-	if c.BaseURL != "" {
-		env["ANTHROPIC_BASE_URL"] = c.BaseURL
-	}
-	for _, p := range []struct{ hi, lo, val string }{
-		{"HTTP_PROXY", "http_proxy", c.HTTPProxy},
-		{"HTTPS_PROXY", "https_proxy", c.HTTPSProxy},
-		{"ALL_PROXY", "all_proxy", c.AllProxy},
-	} {
-		if p.val != "" {
-			env[p.hi] = p.val
-			env[p.lo] = p.val
-		}
-	}
-	if len(env) == 0 {
-		return nil
-	}
-	return env
 }
 
 // ensureSession is the core of /ws/terminal: given a live user and an optional

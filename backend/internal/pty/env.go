@@ -59,7 +59,7 @@ func BuildClaudeEnv(cfg *config.Config) []string {
 	return env
 }
 
-func BuildUserEnv(cfg *config.Config, username, claudeConfigDir string, credEnv map[string]string) []string {
+func BuildUserEnv(cfg *config.Config, username, claudeConfigDir string) []string {
 	envMap := make(map[string]string, 32)
 	for _, e := range os.Environ() {
 		if key, val, ok := strings.Cut(e, "="); ok {
@@ -95,9 +95,6 @@ func BuildUserEnv(cfg *config.Config, username, claudeConfigDir string, credEnv 
 	set("NO_PROXY", cfg.NoProxy)
 	set("no_proxy", cfg.NoProxy)
 	set("API_TIMEOUT_MS", fmt.Sprintf("%d", cfg.APITimeoutMS))
-	for k, v := range credEnv {
-		set(k, v)
-	}
 	env := make([]string, 0, len(envMap))
 	for k, v := range envMap {
 		env = append(env, k+"="+v)
