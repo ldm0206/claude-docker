@@ -42,4 +42,39 @@ export CLAUDE_DEBUG_SSL_CA_DIR="${SSL_CA_DIR}"
 mkdir -p /workspace /data /home
 chmod 0755 /home
 
+# /etc/profile (sourced by `bash -l`) UNCONDITIONALLY resets PATH, which would
+# wipe /opt/claude/bin that the Go server injects via BuildUserEnv — leaving
+# `claude` unfindable in the user's shell. Install a profile.d snippet that
+# re-prepends /opt/claude/bin and the user's ~/.local/bin AFTER /etc/profile's
+# reset, and ensure /etc/profile actually sources profile.d (debian base does,
+# but be defensive so the fix is not silently a no-op).
+mkdir -p /etc/profile.d
+cat > /etc/profile.d/claude-docker.sh <<'PROFILE'
+# Re-prepend tool paths wiped by /etc/profile's PATH reset.
+case ":${PATH}:" in
+  *":/opt/claude/bin:"*) ;;
+  *) PATH="/opt/claude/bin:${PATH}" ;;
+esac
+if [ -d "${HOME}/.local/bin" ]; then
+  case ":${PATH}:" in
+    *":${HOME}/.local/bin:"*) ;;
+    *) PATH="${HOME}/.local/bin:${PATH}" ;;
+  esac
+fi
+export PATH
+PROFILE
+chmod 0644 /etc/profile.d/claude-docker.sh
+if ! grep -q '/etc/profile.d' /etc/profile 2>/dev/null; then
+  cat >> /etc/profile <<'PROFILE'
+
+# Source profile.d snippets (claude-docker PATH fix lives there).
+if [ -d /etc/profile.d ]; then
+  for i in /etc/profile.d/*.sh; do
+    if [ -r "$i" ]; then . "$i"; fi
+  done
+  unset i
+fi
+PROFILE
+fi
+
 exec /app/claude-docker
