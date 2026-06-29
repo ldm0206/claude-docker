@@ -261,6 +261,71 @@ func TestSessionDelete_UnknownSession_Returns404(t *testing.T) {
 	}
 }
 
+// TestSessionDelete_OrphanRow_HardDeletes reproduces the "can't delete after a
+// restart" bug: a session row exists in the DB (alive=1, leftover from a prior
+// run) but is NOT in the live PTY map. The old handleDeleteSession did a live
+// Get, missed, and 404'd — so the user could never clear the dead row (and it
+// kept holding a cap slot). Now the miss falls through to DeleteOrphan, which
+// hard-deletes the row. Cross-user ids still 404 (no leak).
+func TestSessionDelete_OrphanRow_HardDeletes(t *testing.T) {
+	s := newSessionTestServer(t)
+	aliceCookie := loginAs(t, s.Server, "alice")
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+	const orphanSID = "orphan-after-restart"
+	if err := s.db.CreateSession(store.Session{
+		ID: orphanSID, UserID: alice.ID, Name: "alice", StartedAt: 1, LastSeenAt: 1, Alive: true,
+	}); err != nil {
+		t.Fatalf("seed orphan: %v", err)
+	}
+	// Confirm precondition: live map miss.
+	if _, ok := s.sess.Get("alice", orphanSID); ok {
+		t.Fatal("precondition: orphan must not be in the live map")
+	}
+
+	w := deleteSessionViaAPI(t, s, aliceCookie, orphanSID)
+	if w.Code != 200 {
+		t.Fatalf("delete orphan: expected 200, got %d; body=%s", w.Code, w.Body.String())
+	}
+	// Hard-deleted: the row is GONE from the list entirely (not alive=0).
+	w = listSessionsViaAPI(t, s, aliceCookie)
+	var list []map[string]any
+	json.NewDecoder(w.Body).Decode(&list)
+	for _, row := range list {
+		if row["id"] == orphanSID {
+			t.Fatalf("orphan row still listed after delete: %v", row)
+		}
+	}
+}
+
+// TestSessionDelete_OrphanRow_OtherUser_Returns404 verifies DeleteOrphan's
+// ownership check: a DB-only row owned by bob must 404 when alice tries to
+// delete it (same no-leak contract as the live path).
+func TestSessionDelete_OrphanRow_OtherUser_Returns404(t *testing.T) {
+	s := newSessionTestServer(t)
+	aliceCookie := loginAs(t, s.Server, "alice")
+	bob, err := s.db.GetUserByUsername("bob")
+	if err != nil {
+		t.Fatalf("get bob: %v", err)
+	}
+	const bobOrphan = "bobs-orphan-row"
+	if err := s.db.CreateSession(store.Session{
+		ID: bobOrphan, UserID: bob.ID, Name: "bob", StartedAt: 1, LastSeenAt: 1, Alive: true,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := deleteSessionViaAPI(t, s, aliceCookie, bobOrphan)
+	if w.Code != 404 {
+		t.Fatalf("alice deleting bob's orphan: expected 404, got %d; body=%s", w.Code, w.Body.String())
+	}
+	// Bob's row survives.
+	if _, err := s.db.GetSession(bobOrphan); err != nil {
+		t.Fatalf("bob's orphan row should still exist, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Admin session API tests
 // ---------------------------------------------------------------------------

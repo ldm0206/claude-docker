@@ -45,6 +45,15 @@ func main() {
 		log.Fatalf("[server] open store: %v", err)
 	}
 	defer db.Close()
+	// The live PTY map is in-memory and does not survive a restart; any session
+	// row still marked alive=1 is an orphan whose process is gone. Reap them now
+	// so they stop counting toward per-user session caps (otherwise a fresh
+	// /ws/terminal create 409s immediately after deploy).
+	if n, err := db.ReapStaleSessions(); err != nil {
+		log.Fatalf("[server] reap stale sessions: %v", err)
+	} else if n > 0 {
+		log.Printf("[server] reaped %d stale session(s) left alive by a prior run", n)
+	}
 	if err := store.BootstrapAdmin(db, cfg.BootstrapAdminUser, cfg.BootstrapAdminPassword, auth.HashPassword); err != nil {
 		log.Fatalf("[server] bootstrap admin: %v", err)
 	}

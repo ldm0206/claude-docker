@@ -288,6 +288,40 @@ func (m *Manager) Kill(username, sessionID string) error {
 	return nil
 }
 
+// DeleteOrphan hard-deletes a session row that has NO live PTY — the case
+// where Kill cannot apply because the in-memory entry was lost (e.g. a row
+// left dead by a prior restart, or one whose process exited and was reaped).
+// The caller (handleDeleteSession) has already failed the live Get; this
+// method verifies the row belongs to userID before deleting, so a foreign id
+// yields ErrNotFound just like Kill does (no existence leak). Returns nil on
+// success OR when the row is genuinely absent (idempotent delete).
+func (m *Manager) DeleteOrphan(username string, userID int, sessionID string) error {
+	row, err := m.db.GetSession(sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if row.UserID != userID {
+		return ErrNotFound
+	}
+	if err := m.db.DeleteSession(sessionID); err != nil {
+		return err
+	}
+	// Defensive: if a live entry somehow exists under this user for the id
+	// (race with a concurrent revive), drop it too so the map stays consistent.
+	m.mu.Lock()
+	if userSessions, ok := m.sessions[username]; ok {
+		delete(userSessions, sessionID)
+		if len(userSessions) == 0 {
+			delete(m.sessions, username)
+		}
+	}
+	m.mu.Unlock()
+	return nil
+}
+
 // Restart stops the live PTY for (username, sessionID) and starts a fresh one
 // in place, keeping the SAME session id and DB row. It exists for Plan 5's
 // capture toggle: the PTY env factory is lazy (the real *pty.Manager calls

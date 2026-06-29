@@ -53,8 +53,39 @@ export function mountTerminal(root) {
     for (const s of sessions) {
       const t = document.createElement("div");
       t.className = "session-tab" + (s.id === currentSID ? " active" : "");
-      t.textContent = (s.name || s.id.slice(0, 8)) + (s.alive ? "" : " (dead)");
-      t.onclick = () => attach(s.id);
+      const label = document.createElement("span");
+      label.textContent = (s.name || s.id.slice(0, 8)) + (s.alive ? "" : " (dead)");
+      label.onclick = () => attach(s.id);
+      t.appendChild(label);
+      // Per-session delete (×): works for live AND dead/orphan rows. Deleting
+      // the current session resets the terminal and starts a fresh one.
+      const del = document.createElement("button");
+      del.className = "sess-del";
+      del.textContent = "×";
+      del.title = "delete session";
+      del.onclick = async (ev) => {
+        ev.stopPropagation();
+        if (!confirm("Delete this session?")) return;
+        try {
+          await fetch(`/api/sessions/${encodeURIComponent(s.id)}`, { method: "DELETE" });
+        } catch { /* server still reflects the delete via the next list */ }
+        if (s.id === currentSID) {
+          intentionalClose = true;
+          if (ws) { ws.onclose = null; ws.close(); }
+          currentSID = null; term.reset();
+          intentionalClose = false;
+          attach("");
+        }
+        refreshSessions();
+      };
+      t.appendChild(del);
+      tabs.appendChild(t);
+    }
+    // Empty state: no sessions at all.
+    if (sessions.length === 0) {
+      const t = document.createElement("div");
+      t.className = "session-tab muted";
+      t.textContent = "no sessions — click \"+ New session\"";
       tabs.appendChild(t);
     }
   }

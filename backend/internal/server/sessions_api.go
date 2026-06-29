@@ -107,8 +107,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteSession kills and removes a session owned by the caller.
-// Verifies the session belongs to the caller (username-scoped Get); if not → 404
-// (don't leak existence of other users' sessions).
+// Verifies ownership: a LIVE session via username-scoped Get, OR — if the live
+// map misses (the row's process is gone, e.g. after a restart) — via the DB
+// row's user_id. In the orphan case the row is hard-deleted so the user can
+// reclaim session-cap slots from dead sessions. A foreign id 404s either way
+// (never leak existence of other users' sessions).
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id, ok := IdentityFrom(r.Context())
 	if !ok {
@@ -118,18 +121,22 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	sid := chi.URLParam(r, "id")
 
-	// Username-scoped check: Get(username, sid) must hit. This prevents user A
-	// from deleting user B's session — they get 404 rather than revealing the
-	// session exists.
-	if _, ok := s.sess.Get(id.Username, sid); !ok {
+	if _, ok := s.sess.Get(id.Username, sid); ok {
+		if err := s.sess.Kill(id.Username, sid); err != nil {
+			writeJSON(w, 500, map[string]any{"error": "kill session failed"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+
+	// Live map miss: the PTY is gone but the row may still be in the DB. Let
+	// the user delete it (hard-delete the row) so dead/orphan sessions stop
+	// cluttering the list and — once the startup reap lands — stop holding a
+	// cap slot. DeleteOrphan returns ErrNotFound for foreign/absent ids.
+	if err := s.sess.DeleteOrphan(id.Username, id.UserID, sid); err != nil {
 		writeJSON(w, 404, map[string]any{"error": "not found"})
 		return
 	}
-
-	if err := s.sess.Kill(id.Username, sid); err != nil {
-		writeJSON(w, 500, map[string]any{"error": "kill session failed"})
-		return
-	}
-
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

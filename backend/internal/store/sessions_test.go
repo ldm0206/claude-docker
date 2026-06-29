@@ -72,6 +72,42 @@ func TestGetSessionNotFound(t *testing.T) {
 	}
 }
 
+// TestReapStaleSessions verifies the startup reap: every alive=1 row is flipped
+// to alive=0 (rows retained for history), and already-dead rows are untouched.
+// This is what unblocks new-session creation after a restart — without it the
+// orphaned alive rows keep counting toward the per-user cap (→ 409).
+func TestReapStaleSessions(t *testing.T) {
+	db, _ := Open(filepath.Join(t.TempDir(), "t.db"))
+	defer db.Close()
+	uid := mustCreateUser(t, db, "reap-u")
+
+	db.CreateSession(Session{ID: "alive-1", UserID: uid, StartedAt: 1, LastSeenAt: 1, Alive: true})
+	db.CreateSession(Session{ID: "alive-2", UserID: uid, StartedAt: 2, LastSeenAt: 2, Alive: true})
+	db.CreateSession(Session{ID: "dead-1", UserID: uid, StartedAt: 3, LastSeenAt: 3, Alive: false})
+
+	n, err := db.ReapStaleSessions()
+	if err != nil {
+		t.Fatalf("reap: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("reaped = %d, want 2", n)
+	}
+
+	for _, id := range []string{"alive-1", "alive-2", "dead-1"} {
+		s, err := db.GetSession(id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if s.Alive {
+			t.Errorf("session %s still alive after reap", id)
+		}
+	}
+	// Idempotent: a second reap finds nothing.
+	if n2, _ := db.ReapStaleSessions(); n2 != 0 {
+		t.Fatalf("second reap = %d, want 0", n2)
+	}
+}
+
 func TestListSessionsForUser(t *testing.T) {
 	db, _ := Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()

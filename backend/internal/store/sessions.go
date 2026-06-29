@@ -100,6 +100,22 @@ func (d *DB) MarkSessionAlive(id string, ts int64) error {
 	return err
 }
 
+// ReapStaleSessions flips every alive=1 session row to alive=0. Called once at
+// startup: the live PTY map is in-memory and does not survive a process
+// restart, so any row still marked alive=1 is an orphan whose process is gone.
+// Without this reap those rows keep counting toward each user's session cap,
+// which blocks new-session creation (409) after a restart — the field symptom
+// was GET /ws/terminal 409 immediately after deploy. The rows themselves are
+// retained for history; only the liveness flag is corrected.
+func (d *DB) ReapStaleSessions() (int64, error) {
+	res, err := d.sql.Exec(`UPDATE sessions SET alive = 0 WHERE alive = 1`)
+	if err != nil {
+		return 0, fmt.Errorf("reap stale sessions: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // UpdateSessionName changes the name column of a session row. Used by the
 // session-create API to override the default name (opts.Username) with a
 // user-supplied one.
