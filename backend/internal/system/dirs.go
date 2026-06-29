@@ -45,6 +45,16 @@ func provisionDirs(homeRoot, dataRoot, username string, uid int) error {
 	if err := os.MkdirAll(cfg, 0o700); err != nil {
 		return fmt.Errorf("mkdir claude-config: %w", err)
 	}
+	// Symlink ~/.claude → /data/<user>/claude-config so `claude login` (which
+	// reads ~/.claude by default) persists per-user on the /data volume,
+	// decoupled from the workspace. If ~/.claude already exists as a real
+	// file/dir, leave it untouched (never clobber user state).
+	claudeLink := filepath.Join(home, ".claude")
+	if _, err := os.Lstat(claudeLink); os.IsNotExist(err) {
+		if err := os.Symlink(cfg, claudeLink); err != nil {
+			return fmt.Errorf("symlink .claude: %w", err)
+		}
+	}
 	return os.Chown(cfg, uid, uid)
 }
 
