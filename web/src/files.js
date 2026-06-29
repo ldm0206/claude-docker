@@ -125,7 +125,10 @@ export function mountFiles(root) {
   };
   fileInput.onchange = () => uploadFiles(fileInput.files);
   const drop = document.getElementById("drop");
-  drop.onclick = () => fileInput.click();
+  drop.onclick = (e) => {
+    if (e.target.closest("button, a")) return;
+    fileInput.click();
+  };
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("drag"); };
   drop.ondragleave = () => drop.classList.remove("drag");
   drop.ondrop = (e) => {
