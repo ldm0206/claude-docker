@@ -43,26 +43,42 @@ docker compose logs -f claude   # watch for [server] listening on :8080
 - [ ] As bob, in terminal → `echo $ANTHROPIC_AUTH_TOKEN` shows the decrypted value.
 - [ ] Admin → Credentials list does NOT show the token value (only name/note).
 
-## 5. SFTP
+## 5. Web file manager
 
-- [ ] From a host SFTP client: connect to `<host>:22` as alice + password.
-- [ ] alice sees `workspace/` → can upload/download files.
-- [ ] alice CANNOT see `/etc`, `/root`, or other users' homes (chroot confinement).
-- [ ] Admin SFTP → full filesystem access (root).
+- [ ] As alice, open **Files** → browse `/workspace` contents.
+- [ ] Upload a small file in Files; confirm it appears in `/home/alice/workspace` when viewed in terminal (`ls`).
+- [ ] Download the uploaded file and confirm bytes match.
+- [ ] Edit file text inline and save; verify updated content persisted.
+- [ ] Delete the file via Files → it disappears from terminal listing.
+- [ ] Attempt path escape with input like `../../etc` while browsing/uploading; request returns HTTP `400`.
+- [ ] Upload + download traffic is reflected in monthly usage at `/api/admin/users/:id/usage` (`↑`/`↓` byte counters increase for alice).
 
 ## 6. Quotas
 
 - [ ] Admin → Users → alice's disk column shows used/limit.
-- [ ] Upload a large file via SFTP → disk usage updates within 60s.
+- [ ] Upload a large file via Files/web upload → disk usage updates within 60s.
 - [ ] Over-quota → panel shows "over" + terminal shows a warning banner.
 
 ## 7. Traffic
 
-- [ ] After some claude/SFTP activity → admin → Users → traffic column shows ↓/↑ bytes.
+- [ ] After some claude/web-file-manager activity → admin → Users → traffic column shows ↓/↑ bytes.
 - [ ] Monthly traffic table (`/api/admin/traffic`) shows the current month's totals.
 - [ ] If `nft` is unavailable → log shows "traffic accounting in no-op mode" (graceful).
 
-## 8. Capture (admin debug)
+## 8. Terminal WS
+
+- [ ] With Cloudflare + nginx + HTTPS in front, open terminal and keep it open >100s (no keyboard/app activity).
+- [ ] Confirm WS remains connected beyond idle timeout; terminal still receives ping/pong packets.
+- [ ] Simulate network interruption; terminal reconnects automatically and resumes session without data loss.
+- [ ] Validate WS upgrade uses the auth cookie (HTTP 101 and no intermediate `401` during upgrade).
+
+## 9. Claude login
+
+- [ ] Confirm `/home/<user>/.claude` is a symlink to `/data/<user>/claude-config`.
+- [ ] As alice in web terminal, run `claude login` and complete OAuth in a local browser.
+- [ ] Verify `/data/<user>/claude-config/.credentials.json` is created and contains `claude ai` OAuth creds.
+
+## 10. Capture (admin debug)
 
 - [ ] Admin → Captures panel loads (empty initially).
 - [ ] Enable capture on an admin session (API: `POST /api/admin/sessions/:id/capture/enable`).
@@ -70,9 +86,9 @@ docker compose logs -f claude   # watch for [server] listening on :8080
 - [ ] Verify secrets are redacted (API keys show `[REDACTED]`).
 - [ ] Disable capture → session restarts without the proxy.
 
-## 9. Suspend / delete
+## 11. Suspend / delete
 
-- [ ] Suspend a user → their sessions die, SFTP login fails, web login blocked.
+- [ ] Suspend a user → their web login blocked and sessions die.
 - [ ] Unsuspend → user can log in again.
 - [ ] Delete a user → `/home/<user>` + `/data/<user>` removed, DB row gone.
 
@@ -82,6 +98,4 @@ These are Linux-runtime wiring items that compile + cross-compile clean but coul
 
 - **cgroup apply + pid**: the cgroup subgroup is created but the PTY's pid may not be moved into `cgroup.procs` — CPU/mem limits may not enforce. Verify + fix if needed.
 - **nft counter install**: counters are installed lazily on first session-create; verify the nft ruleset shows per-user rules.
-- **SSH admin shell**: currently a placeholder `Exit(0)` — admin gets the web terminal instead. Wire a root PTY if SSH admin shell is needed.
-- **SFTP confinement**: `pkg/sftp` serves from `/` unless the session handler chroots+setuids. Verify alice can't escape `/home/alice`.
 - **Capture Response hook**: the go-mitmproxy `Response` callback (session resolution + redaction + store.Add) may need the flow's connection context wired to resolve the session id.

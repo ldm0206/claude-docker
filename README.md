@@ -1,6 +1,6 @@
 # Claude Code — Multi-User Docker Platform
 
-An isolated, browser-accessible Claude Code environment for **multiple users**, with per-user Linux isolation, SFTP, quotas, traffic accounting, and an admin management panel. One container, one Go binary.
+An isolated, browser-accessible Claude Code environment for **multiple users**, with per-user Linux isolation, quotas, traffic accounting, and an admin management panel. One container, one Go binary.
 
 ## Quick start
 
@@ -23,7 +23,7 @@ An isolated, browser-accessible Claude Code environment for **multiple users**, 
 - **Multi-user identity**: username + password (argon2id), first-login change, admin/user roles, bootstrap admin.
 - **Per-user isolation**: each user gets a Linux system account, separate `/home/<user>/workspace` + `/data/<user>/claude-config`, `gosu`-dropped PTY.
 - **Persistent multi-session terminals**: detach (close browser) → resume; session cap per user.
-- **SFTP**: embedded SSH/SFTP server (port 22); regular users confined to their workspace, admins get a root shell.
+- **Web file manager**: in-browser browse/upload/download/edit over each user's `~/workspace` (no external SFTP client needed).
 - **Quotas**: soft disk quota (`du` monitor + panel) + cgroup v2 CPU/memory (per role template).
 - **Traffic**: nftables cgroup counters → monthly up/down per user (requires `CAP_NET_ADMIN`).
 - **Credential presets**: AES-256-GCM-encrypted Anthropic credentials, reusable across users, rotatable.
@@ -36,7 +36,6 @@ An isolated, browser-accessible Claude Code environment for **multiple users**, 
 ```
 Single Go binary (CGO-free, static) running as root inside the container:
   HTTP :8080   → REST API + WebSocket (terminal/metrics/captures) + embedded SPA
-  SSH  :22     → embedded SFTP server (gliderlabs/ssh + pkg/sftp)
   MITM :8888   → lazy-started go-mitmproxy (admin capture only)
   SQLite       → /data/app.db (users, sessions, credentials, templates, traffic)
   nftables     → per-user cgroup traffic counters (CAP_NET_ADMIN)
@@ -52,16 +51,16 @@ Single Go binary (CGO-free, static) running as root inside the container:
 | `MASTER_KEY` | yes | AES-256-GCM key for credential presets (32 bytes base64). |
 | `BOOTSTRAP_ADMIN_USER` / `BOOTSTRAP_ADMIN_PASSWORD` | first run | Seed initial admin (forces password change). |
 | `PORT` | no (8080) | HTTP port. |
-| `SFTP_PORT` | no (22) | SSH/SFTP port. |
+| `COOKIE_SAMESITE` | no (none) | Cookie SameSite mode (`none`, `lax`). |
 | `CLAUDE_DEBUG_PROXY_PORT` | no (8888) | MITM capture proxy port. |
 
 ## Verify on deploy
 
-See `DEPLOY-TEST.md` for a comprehensive checklist of Linux-runtime items to verify after `docker compose up` (gosu PTY, useradd/dir-ownership, cgroup enforcement, nft traffic, SFTP confinement, capture CA-trust, bootstrap admin).
+See `DEPLOY-TEST.md` for a comprehensive checklist of Linux-runtime items to verify after `docker compose up` (gosu PTY, useradd/dir-ownership, cgroup enforcement, nft traffic, file workspace confinement, capture CA-trust, bootstrap admin).
 
 ## Security notes
 
 - HTTP only — front with TLS (Caddy/nginx/Cloudflare) for remote/company-network use.
 - The debug-capture CA is trusted only inside the container.
 - Credentials encrypted at rest; plaintext only in the PTY process env.
-- Login timing equalized (decoy argon2) to prevent user enumeration.
+- Session cookies are `Secure` + `SameSite=None` by default (HTTPS). For local `http://localhost` dev set `COOKIE_SAMESITE=lax`.
