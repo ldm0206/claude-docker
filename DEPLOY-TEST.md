@@ -92,6 +92,38 @@ docker compose logs -f claude   # watch for [server] listening on :8080
 - [ ] Unsuspend → user can log in again.
 - [ ] Delete a user → `/home/<user>` + `/data/<user>` removed, DB row gone.
 
+## 12. Shell toolchain
+
+After `docker compose up`, exec into the container as a regular user and confirm
+all preinstalled tools resolve on the user PATH:
+
+```bash
+docker compose exec claude gosu alice bash -lc 'node -v && npm -v && python3 --version && git --version && claude --version'
+```
+
+Each command must print a version (node 22.x, npm 10.x, python 3.11.x, git 2.x,
+claude x.y.z). A `command not found` means the image layer failed.
+
+## 13. Network exposure (audit IP trust)
+
+`clientIP` trusts `CF-Connecting-IP` / `X-Forwarded-For`. This is safe ONLY if
+the container's 8080 port is not reachable directly from the public internet
+(i.e. only nginx reaches it). If 8080 were public, a client could forge the
+header. Verify: `docker compose port claude 8080` is bound to a private
+interface / localhost, not 0.0.0.0:8080 exposed to the WAN.
+
+## 14. Audit (login IP + session IP)
+
+- As admin, open the **Audit** sidebar item: login events appear newest-first;
+  a failed login (wrong password) shows as a red `fail` row with the attempted
+  username and the client IP.
+- Log in as a user via Cloudflare; the Audit row's IP is the user's real IP
+  (not nginx's). If it shows a private/nginx IP, the `CF-Connecting-IP` /
+  `X-Forwarded-For` header is not being passed by nginx.
+- Users page: each user shows a `Last login` column with timestamp + IP.
+- Create a terminal session for a user; as admin, the user's session list
+  (`/api/admin/users/:id/sessions`) includes `clientIp` matching the login IP.
+
 ## Known gaps (documented)
 
 These are Linux-runtime wiring items that compile + cross-compile clean but couldn't be runtime-verified on the Windows dev host. If something doesn't work, check here first:
