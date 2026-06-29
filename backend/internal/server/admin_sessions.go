@@ -9,7 +9,7 @@ import (
 )
 
 // handleAdminListSessions lists all sessions for a given user (by user id).
-// Admin-only. 200 [{id, name, startedAt, lastSeenAt, alive}, ...]
+// Admin-only. 200 [{id, name, startedAt, lastSeenAt, alive, clientIp}, ...]
 func (s *Server) handleAdminListSessions(w http.ResponseWriter, r *http.Request) {
 	uid, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil {
