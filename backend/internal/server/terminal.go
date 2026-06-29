@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 )
+
+var wsPingInterval = 30 * time.Second
 
 type clientMsg struct {
 	Type     string `json:"type"`
@@ -78,7 +81,6 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	unsubData := p.OnData(func(b []byte) {
 		_ = c.Write(ctx, websocket.MessageText, b)
 	})
-	defer unsubData()
 	unsubExit := p.OnExit(func(code int) {
 		// Natural process exit: notify the client. We do NOT call
 		// MarkSessionExited here — the row stays alive=1 until an explicit
@@ -86,7 +88,27 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		// for Plan 3; documented in the task-5 report.
 		_ = c.Write(ctx, websocket.MessageText, mustJSON(clientMsg{Type: "pty-exit", ExitCode: code}))
 	})
+	defer unsubData()
 	defer unsubExit()
+	// Keepalive: send a ping every 30s so Cloudflare (~100s idle) and nginx
+	// (proxy_read_timeout 300s) do not reap an idle WS. The client ignores
+	// {type:"ping"} messages (terminal.js treats parsed JSON with no terminal
+	// data as a no-op). Stopped on ctx cancel / WS close.
+	go func() {
+		ticker := time.NewTicker(wsPingInterval)
+		defer ticker.Stop()
+		pingMsg := mustJSON(map[string]any{"type": "ping"})
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := c.Write(ctx, websocket.MessageText, pingMsg); err != nil {
+					return
+				}
+			}
+		}
+	}()
 
 	for {
 		_, data, err := c.Read(ctx)
