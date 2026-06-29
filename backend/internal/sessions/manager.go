@@ -187,6 +187,60 @@ func (m *Manager) Create(username string, userID int, cwd string, env EnvFactory
 	return id, p, nil
 }
 
+// Revive rebuilds the live PTY for a session id whose DB row still exists but
+// whose in-memory entry was lost — the post-restart case: the sessions table
+// row persists across a process restart, but the live map (and the PTY process)
+// does not. The frontend still lists the row via /api/sessions and tries to
+// attach, so rather than 404 we reuse the same id, rebuild the PTY, flip the
+// row back to alive=1, and re-register the natural-exit reaper.
+//
+// It does NOT re-check the session cap: the session is already counted as alive
+// in the DB (or, if it died, the user is re-occupying their own slot — semantically
+// the same session, not a new one). Caller MUST have verified the row belongs to
+// userID (GetSession does not scope by user; ensureSession does the ownership
+// check before calling this).
+//
+// Returns ErrNotFound if the id has no DB row at all (genuinely unknown).
+func (m *Manager) Revive(username string, userID int, sessionID, cwd string, env EnvFactory, opts pty.Options) (PTY, error) {
+	if _, err := m.db.GetSession(sessionID); err != nil {
+		return nil, ErrNotFound
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now().Unix()
+	if err := m.db.MarkSessionAlive(sessionID, now); err != nil {
+		return nil, fmt.Errorf("revive session row: %w", err)
+	}
+
+	opts.Cwd = cwd
+	opts.Username = username
+	if env != nil {
+		opts.Env = func() []string { return env(username, sessionID) }
+	}
+	p := m.factory(opts)
+
+	if m.sessions[username] == nil {
+		m.sessions[username] = map[string]PTY{}
+	}
+	m.sessions[username][sessionID] = p
+
+	p.OnExit(func(_ int) {
+		m.mu.Lock()
+		if userSessions, ok := m.sessions[username]; ok {
+			delete(userSessions, sessionID)
+			if len(userSessions) == 0 {
+				delete(m.sessions, username)
+			}
+		}
+		m.mu.Unlock()
+		_ = m.db.MarkSessionExited(sessionID)
+	})
+
+	return p, nil
+}
+
 // Get returns the live PTY for (username, sessionID). The username scoping
 // prevents one user from touching another's PTY. Returns (nil, false) if absent.
 func (m *Manager) Get(username, sessionID string) (PTY, bool) {

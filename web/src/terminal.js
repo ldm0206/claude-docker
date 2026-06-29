@@ -74,6 +74,12 @@ export function mountTerminal(root) {
   function attach(sid) {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     currentSID = sid || "";
+    // Tracks whether the server confirmed the session this connect. If the WS
+    // closes (HTTP-level 404 surfaces as onclose 1006) BEFORE confirmation while
+    // we requested a specific sid, that sid is stale (e.g. the row was lost
+    // server-side and the revive path also missed) — retry once with no sid so
+    // a fresh session is created instead of looping on the dead id forever.
+    let sessionConfirmed = false;
     if (ws) { ws.onclose = null; ws.close(); }
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws/terminal` + (sid ? `?session=${encodeURIComponent(sid)}` : ""));
@@ -87,7 +93,7 @@ export function mountTerminal(root) {
       try {
         const m = JSON.parse(raw);
         if (m.type === "ping") return;
-        if (m.type === "session" && m.id) { currentSID = m.id; status("session " + m.id.slice(0, 8)); refreshSessions(); return; }
+        if (m.type === "session" && m.id) { sessionConfirmed = true; currentSID = m.id; status("session " + m.id.slice(0, 8)); refreshSessions(); return; }
         if (m.type === "pty-exit") { status("session ended (exit " + (m.exitCode ?? "?") + ")"); refreshSessions(); return; }
         return;
       } catch { /* binary/terminal data */ }
@@ -100,6 +106,14 @@ export function mountTerminal(root) {
       if (ev.code === 1008) {
         // auth/policy rejection: do not loop; tell user to sign in.
         status("session expired — reload to sign in");
+        return;
+      }
+      // We asked for a specific sid but the server never confirmed it (closed
+      // before the first session message) → the id is unknown/stale. Drop it
+      // and create a fresh session instead of reconnecting to the dead id.
+      if (currentSID && !sessionConfirmed) {
+        currentSID = "";
+        attach("");
         return;
       }
       scheduleReconnect(currentSID);

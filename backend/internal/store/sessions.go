@@ -90,6 +90,16 @@ func (d *DB) MarkSessionExited(id string) error {
 	return err
 }
 
+// MarkSessionAlive flips a session row back to alive=1 and refreshes
+// last_seen_at. Used by sessions.Manager.Revive when a DB-persisted session is
+// reattached after the live PTY was lost to a server restart: the row already
+// exists (so no INSERT), it just needs to look alive again and reflect the
+// reconnect time.
+func (d *DB) MarkSessionAlive(id string, ts int64) error {
+	_, err := d.sql.Exec(`UPDATE sessions SET alive = 1, last_seen_at = ? WHERE id = ?`, ts, id)
+	return err
+}
+
 // UpdateSessionName changes the name column of a session row. Used by the
 // session-create API to override the default name (opts.Username) with a
 // user-supplied one.

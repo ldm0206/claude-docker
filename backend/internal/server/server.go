@@ -240,7 +240,30 @@ func (s *Server) ensureSession(u store.User, sid string, r *http.Request) (sessi
 		// origin recorded at session creation, not the last-connect address.
 		p, ok := s.sess.Get(u.Username, sid)
 		if !ok {
-			return nil, "", http.StatusNotFound
+			// Live PTY miss. Before returning 404, check whether the session
+			// exists in the DB and belongs to this user: after a server restart
+			// the in-memory map is empty but the persisted row is still there,
+			// and the frontend (which lists via /api/sessions) will try to
+			// reattach. Revive rebuilds the PTY under the SAME id; only a row
+			// that is genuinely unknown OR owned by another user yields 404.
+			row, err := s.db.GetSession(sid)
+			if err != nil || row.UserID != u.ID {
+				return nil, "", http.StatusNotFound
+			}
+			rp, err := s.sess.Revive(u.Username, u.ID, sid, "/home/"+u.Username+"/workspace", s.buildUserEnvFactory(u), pty.Options{
+				Command:  "bash",
+				Cols:     80,
+				Rows:     24,
+				Username: u.Username,
+				ClientIP: s.clientIP(r),
+			})
+			if err != nil {
+				return nil, sid, http.StatusInternalServerError
+			}
+			if err := rp.Start(); err != nil {
+				return nil, sid, http.StatusInternalServerError
+			}
+			return rp, sid, http.StatusOK
 		}
 		if !p.Alive() {
 			// Lazy restart: process exited while the WS was disconnected.

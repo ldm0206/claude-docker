@@ -414,6 +414,62 @@ func TestEnsureSessionUnknownSIDReturns404(t *testing.T) {
 	}
 }
 
+// TestEnsureSessionRevivesDBOnlySID reproduces the post-restart 404: a session
+// row exists in the DB (alive=1) but is absent from the live PTY map (the
+// process image is gone after a server restart). The frontend lists it via
+// /api/sessions and tries to attach — ensureSession must REVIVE the session
+// (reuse the same id, rebuild the PTY) rather than 404.
+//
+// Without the revive path, s.sess.Get returns (nil,false) and ensureSession
+// falls through to the unknown-sid 404 branch — the bug in the field log:
+// GET /ws/terminal?session=<id> 404 after a restart.
+func TestEnsureSessionRevivesDBOnlySID(t *testing.T) {
+	s := newTestServer(t)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+
+	// Seed a DB session row that has NO live PTY (simulates a server restart:
+	// the row persists, the in-memory map is empty).
+	const staleSID = "stale-restart-sid"
+	if err := s.db.CreateSession(store.Session{
+		ID:         staleSID,
+		UserID:     alice.ID,
+		Name:       "alice",
+		StartedAt:  1,
+		LastSeenAt: 1,
+		Alive:      true,
+		ClientIP:   "1.2.3.4",
+	}); err != nil {
+		t.Fatalf("seed stale session: %v", err)
+	}
+	if got, ok := s.sess.Get("alice", staleSID); ok {
+		t.Fatalf("precondition: stale sid should NOT be in the live map, got %v", got)
+	}
+
+	// Attach — must revive, not 404.
+	p, sid, status := s.ensureSession(alice, staleSID, httptest.NewRequest("GET", "/", nil))
+	if status != 200 {
+		t.Fatalf("status = %d, want 200 (revive)", status)
+	}
+	if sid != staleSID {
+		t.Fatalf("revive changed sid: %q, want %q", sid, staleSID)
+	}
+	if p == nil {
+		t.Fatal("revived PTY is nil")
+	}
+	// The revived PTY must be live in the manager under the SAME id.
+	if got, ok := s.sess.Get("alice", staleSID); !ok || got != p {
+		t.Fatalf("manager.Get after revive: ok=%v, match=%v", ok, got == p)
+	}
+	// Exactly one PTY was built (the revive path builds one; it must not also
+	// leave a phantom create behind).
+	if n := len(s.createdPTYs()); n != 1 {
+		t.Fatalf("PTYs built = %d, want 1", n)
+	}
+}
+
 // TestEnsureSessionCapReachedReturns409 sets max_sessions=0 then 1, creates
 // one, and verifies the next create yields 409.
 func TestEnsureSessionCapReachedReturns409(t *testing.T) {
@@ -458,6 +514,51 @@ func TestEnsureSessionStartsDeadPTY(t *testing.T) {
 	}
 	if atomic.LoadInt32(&fp.startCnt) != 2 {
 		t.Fatalf("Start called %d, want 2 (lazy restart)", atomic.LoadInt32(&fp.startCnt))
+	}
+}
+
+// TestEnsureSessionReviveRejectsOtherUsersSID verifies the revive path does NOT
+// let user B attach to a DB-persisted session owned by user A. Without the
+// ownership check in ensureSession, B could probe/revive A's session id by
+// replaying it after a restart. The fix checks row.UserID == u.ID before
+// reviving; a mismatch yields 404 (same as unknown — never leak existence).
+func TestEnsureSessionReviveRejectsOtherUsersSID(t *testing.T) {
+	s := newTestServer(t)
+	alice, err := s.db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice: %v", err)
+	}
+	// Second user "bob".
+	h, err := auth.HashPassword("pw123")
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if _, err := s.db.CreateUser(store.User{
+		UID: mustUID(t, s.db), Username: "bob", PasswordHash: h, Role: "user", CreatedAt: 1,
+	}); err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	bob, err := s.db.GetUserByUsername("bob")
+	if err != nil {
+		t.Fatalf("get bob: %v", err)
+	}
+
+	// A session owned by alice, no live PTY (restart state).
+	const aliceSID = "alice-owned-sid"
+	if err := s.db.CreateSession(store.Session{
+		ID: aliceSID, UserID: alice.ID, Name: "alice", StartedAt: 1, LastSeenAt: 1, Alive: true,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Bob tries to attach alice's sid → must 404, NOT revive.
+	_, _, status := s.ensureSession(bob, aliceSID, httptest.NewRequest("GET", "/", nil))
+	if status != 404 {
+		t.Fatalf("cross-user attach status = %d, want 404", status)
+	}
+	// And alice's session must NOT have been revived into bob's namespace.
+	if got, ok := s.sess.Get("bob", aliceSID); ok {
+		t.Fatalf("bob must not have a live PTY for alice's sid, got %v", got)
 	}
 }
 
