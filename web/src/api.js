@@ -36,3 +36,18 @@ export function openWs(path, onMsg) {
   };
   return ws;
 }
+
+export async function uploadFile(url, file, onProgress) {
+  return new Promise((resolve) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status });
+    xhr.onerror = () => resolve({ ok: false, status: 0 });
+    xhr.send(fd);
+  });
+}

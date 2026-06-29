@@ -170,19 +170,8 @@ function viewTerminal(root) { mountTerminal(root); }
 // View: Files (SFTP connection info + workspace note)
 // ---------------------------------------------------------------------------
 function viewFiles(root) {
-  root.innerHTML = `
-    <div class="card pads">
-      <h2 style="margin:0 0 8px;font-size:16px">SFTP / SSH access</h2>
-      <p class="muted">Connect to your workspace with any SFTP client (FileZilla, WinSCP, cyberduck):</p>
-      <div class="card pads" style="background:var(--surface-2);font-family:var(--mono);font-size:13px;line-height:1.8">
-        Host: <b>${location.hostname}</b><br>
-        Port: <b>${location.port || '8080'}</b> (SFTP/SSH port — check your deployment; default 22)<br>
-        Username: <b>${self.username}</b><br>
-        Password: your account password<br>
-        Protocol: <b>SFTP</b>
-      </div>
-      <p class="muted tiny" style="margin-top:12px">Your files live at <code>~/workspace/</code>. Claude config at a separate persistent path (outside the SFTP chroot).</p>
-    </div>`;
+  // Lazy-import the module to keep the initial bundle small.
+  import("./files.js").then(({ mountFiles }) => mountFiles(root));
 }
 
 // ---------------------------------------------------------------------------
