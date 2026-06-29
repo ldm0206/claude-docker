@@ -318,6 +318,15 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/api/sessions", s.handleCreateSession)
 		r.Get("/api/sessions", s.handleListSessions)
 		r.Delete("/api/sessions/{id}", s.handleDeleteSession)
+		// Web file manager (Plan 8) — per-user traffic accounting via
+		// recordFileTraffic on every upload/download.
+		r.Get("/api/files/list", s.handleFilesList)
+		r.Get("/api/files/download", s.handleFilesDownload)
+		r.Post("/api/files/upload", s.handleFilesUpload)
+		r.Post("/api/files/mkdir", s.handleFilesMkdir)
+		r.Post("/api/files/rename", s.handleFilesRename)
+		r.Post("/api/files/edit", s.handleFilesEdit)
+		r.Delete("/api/files", s.handleFilesDelete)
 		// Admin group
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
@@ -396,6 +405,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeJSON(w, 403, map[string]any{"error": "suspended"})
 			return
 		}
+		// Plan 8: enrich the Identity with the live user's DB id so the
+		// /api/files/* handlers can attribute upload/download bytes to this
+		// user's traffic bucket (authedIdentity only has cookie claims).
+		id.UserID = u.ID
 		next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
 	})
 }

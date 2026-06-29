@@ -18,9 +18,15 @@ const identityKey ctxKey = 0
 // Identity is the authenticated principal stashed in the request context by
 // authMiddleware (and returned by authedIdentity for routes that check the
 // cookie themselves, e.g. the WebSocket handlers).
+//
+// UserID is populated ONLY by authMiddleware (which re-fetches the live user);
+// authedIdentity returns claims straight from the cookie and leaves it zero.
+// The /api/files/* REST handlers go through authMiddleware and use it for
+// per-user traffic accounting (Plan 8). WS handlers do not need it.
 type Identity struct {
 	Username string
 	Role     string
+	UserID   int
 }
 
 // WithIdentity returns ctx with id embedded under identityKey.
