@@ -113,12 +113,6 @@ table.tbl tr:hover td { background: var(--surface-2); }
 .modal .bd { padding:16px; }
 
 .term-wrap { display:flex; flex-direction:column; height:calc(100vh - 110px); }
-.session-tabs { display:flex; gap:6px; padding:0 0 8px; flex-wrap:wrap;}
-.session-tab { display:flex; align-items:center; gap:6px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:5px 8px 5px 12px; cursor:pointer; font-size:12px; }
-.session-tab.active { border-color:var(--accent); color:var(--accent); }
-.session-tab.muted { cursor:default; opacity:.7; }
-.sess-del { background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:14px; line-height:1; padding:0 2px; border-radius:var(--radius-sm); }
-.sess-del:hover { color:var(--danger, #d97757); }
 .term-body { background: var(--term-bg); border:1px solid var(--border); border-radius:var(--radius-sm); flex:1; padding:4px; overflow:hidden; }
 
 .menu-btn { display:none; background:transparent; border:1px solid var(--border); border-radius:var(--radius-sm); padding:5px 10px; cursor:pointer; color:var(--text); }

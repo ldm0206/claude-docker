@@ -45,6 +45,19 @@ func newSessionTestServer(t *testing.T) *testServer {
 	}); err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
+	// Default per-user cap is 1 (single-session model). Several tests here
+	// exercise multi-session listing/kill-all semantics, so raise both users'
+	// cap. Tests that specifically check the cap (OverCap → 409) set it back
+	// down themselves.
+	for _, name := range []string{"alice", "bob"} {
+		u, err := db.GetUserByUsername(name)
+		if err != nil {
+			t.Fatalf("get %s: %v", name, err)
+		}
+		if err := db.SetUserMaxSessions(u.ID, 8); err != nil {
+			t.Fatalf("set max sessions %s: %v", name, err)
+		}
+	}
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
 	factory, created := newFakePTYFactory()
 	mgr := sessions.NewManager(db, factory)

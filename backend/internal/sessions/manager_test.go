@@ -108,6 +108,13 @@ func mustCreateUser(t *testing.T, db *store.DB, username string) (id int) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
+	// These tests exercise multi-session Manager logic (KillAll across several
+	// sessions, List returning multiple, …) which is independent of the cap.
+	// The default cap is 1 (single-session model), so raise it here to keep the
+	// multi-session coverage meaningful.
+	if err := db.SetUserMaxSessions(u.ID, 8); err != nil {
+		t.Fatalf("set max sessions: %v", err)
+	}
 	return u.ID
 }
 

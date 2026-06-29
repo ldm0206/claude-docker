@@ -123,14 +123,14 @@ func TestEffectiveMaxSessions(t *testing.T) {
 	}
 	defer db.Close()
 
-	// No override, no template -> default 3
+	// No override, no template -> default 1 (single-session model)
 	u1 := helperCreateUser(t, db, "eff1")
 	ms, err := db.EffectiveMaxSessions(u1.ID)
 	if err != nil {
 		t.Fatalf("effective max sessions: %v", err)
 	}
-	if ms != 3 {
-		t.Fatalf("no override, no template: got %d, want 3", ms)
+	if ms != 1 {
+		t.Fatalf("no override, no template: got %d, want 1", ms)
 	}
 
 	// Bound template but no user override -> template value

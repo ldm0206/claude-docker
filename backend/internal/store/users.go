@@ -140,8 +140,10 @@ func (d *DB) EffectiveMaxSessions(userID int) (int, error) {
 	if err == nil && tmplMax.Valid {
 		return int(tmplMax.Int64), nil
 	}
-	// Default
-	return 3, nil
+	// Default: 1 — single-session-per-user model. The frontend attaches the
+	// one alive session (or creates one); admins can still raise this per-user
+	// / per-template, but the out-of-the-box experience is one session.
+	return 1, nil
 }
 
 func (d *DB) EffectiveDiskQuota(userID int) (int64, error) {
