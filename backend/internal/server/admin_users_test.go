@@ -277,6 +277,53 @@ func TestAdminListUsers(t *testing.T) {
 	}
 }
 
+func TestAdminListUsers_LastLoginAtIsNumberAfterLogin(t *testing.T) {
+	s, _, db := newTestServerWithAdmin(t)
+
+	adminCookie(t, s)
+	alice, err := db.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("get alice from db: %v", err)
+	}
+	if err := db.TouchLogin(alice.ID, 1700000000, "127.0.0.1"); err != nil {
+		t.Fatalf("touch login alice: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/admin/users", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: adminCookie(t, s)})
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var aliceResp map[string]any
+	for _, u := range resp {
+		if u["username"] == "alice" {
+			aliceResp = u
+			break
+		}
+	}
+	if aliceResp == nil {
+		t.Fatal("alice not found in /api/admin/users response")
+	}
+	v, ok := aliceResp["lastLoginAt"]
+	if !ok {
+		t.Fatal("missing lastLoginAt field")
+	}
+	lastLoginAt, ok := v.(float64)
+	if !ok {
+		t.Fatalf("lastLoginAt should be number, got %T", v)
+	}
+	if lastLoginAt <= 0 {
+		t.Fatalf("expected lastLoginAt > 0 after login, got %v", lastLoginAt)
+	}
+}
+
 func TestAdminSuspendUnsuspend(t *testing.T) {
 	s, fake, db := newTestServerWithAdmin(t)
 	// Create a user to suspend
