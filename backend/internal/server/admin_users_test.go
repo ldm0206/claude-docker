@@ -30,6 +30,7 @@ type fakeProvisioner struct {
 	deleteErr   error
 	lockErr     error
 	unlockErr   error
+	ensureErr   error
 }
 
 type createCall struct {
@@ -40,6 +41,10 @@ type createCall struct {
 func (f *fakeProvisioner) Create(username string, uid int) error {
 	f.createCalls = append(f.createCalls, createCall{username, uid})
 	return f.createErr
+}
+func (f *fakeProvisioner) Ensure(username string, uid int) error {
+	f.createCalls = append(f.createCalls, createCall{username, uid})
+	return f.ensureErr
 }
 func (f *fakeProvisioner) Delete(username string) error {
 	f.deleteCalls = append(f.deleteCalls, username)

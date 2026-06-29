@@ -57,6 +57,9 @@ func main() {
 	if err := store.BootstrapAdmin(db, cfg.BootstrapAdminUser, cfg.BootstrapAdminPassword, auth.HashPassword); err != nil {
 		log.Fatalf("[server] bootstrap admin: %v", err)
 	}
+	if err := ensureUsersProvisioned(db, system.DefaultProvisioner); err != nil {
+		log.Fatalf("[server] provision existing users: %v", err)
+	}
 
 	// PTY factory: each sessions.Manager.Create builds a fresh *pty.Manager.
 	// Real creack/pty + gosu runtime is Linux-only.
@@ -109,6 +112,27 @@ func main() {
 }
 
 func envLookup(k string) (string, bool) { return osLookupEnv(k) }
+
+// ensureUsersProvisioned repairs any user whose DB row exists without a
+// provisioned Linux account/home. BootstrapAdmin (called just before this)
+// inserts the first admin as a DB row only — without this pass that admin has
+// no /home/<user>/workspace, so the first /ws/terminal connect spawns
+// `gosu <admin> bash -l` into a non-existent home and the PTY exits instantly
+// (the "connects then immediately disconnects" symptom). Ensure is idempotent,
+// so already-provisioned users (e.g. those created via the admin API, which
+// provisions at creation time) are a no-op here.
+func ensureUsersProvisioned(db *store.DB, p system.AccountProvisioner) error {
+	users, err := db.ListUsers()
+	if err != nil {
+		return fmt.Errorf("list users: %w", err)
+	}
+	for _, u := range users {
+		if err := p.Ensure(u.Username, u.UID); err != nil {
+			log.Printf("[server] warning: provision user %s (uid %d): %v", u.Username, u.UID, err)
+		}
+	}
+	return nil
+}
 
 func httpListenAndServe(port int, h http.Handler) error {
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), h)
