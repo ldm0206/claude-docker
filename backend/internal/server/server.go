@@ -327,7 +327,7 @@ func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", s.handleHealth)
 	r.Post("/auth", s.handleLogin)
-	r.Post("/logout", s.handleLogout)
+	r.Post("/auth/logout", s.handleLogout)
 	// /ws/* routes check the cookie inside the handler before upgrading.
 	r.Get("/ws/terminal", s.handleTerminalWS)
 	r.Get("/ws/captures", s.handleCapturesWS)

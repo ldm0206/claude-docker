@@ -125,7 +125,7 @@ function renderSidebar() {
   }
   sb.appendChild(el("div", { class: "nav-spacer" }));
   sb.appendChild(themeToggle());
-  sb.appendChild(el("button", { class: "nav-item", onclick: () => { postJson("/auth/logout"); location.reload(); } }, "⎋ Sign out"));
+  sb.appendChild(el("button", { class: "nav-item", onclick: async () => { await postJson("/auth/logout"); location.reload(); } }, "⎋ Sign out"));
 }
 
 function navBtn(k, label) {

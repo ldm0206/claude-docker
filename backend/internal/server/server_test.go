@@ -194,6 +194,29 @@ func TestLoginSuccessSetsCookieAndRole(t *testing.T) {
 	}
 }
 
+// TestLogoutClearsCookie pins the logout endpoint path (/auth/logout — the
+// SPA calls POST /auth/logout) and that it expires the session cookie. A past
+// bug had the route at /logout while the SPA posted /auth/logout, so the
+// sign-out button 404'd silently.
+func TestLogoutClearsCookie(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("POST", "/auth/logout", nil)
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d; body=%s", w.Code, w.Body.String())
+	}
+	var cleared bool
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("expected session cookie to be expired (MaxAge < 0)")
+	}
+}
+
 // TestLoginCookieAttributes verifies the session cookie is set with Secure and
 // the configured SameSite (default "none" for HTTPS deployments).
 func TestLoginCookieAttributes(t *testing.T) {
