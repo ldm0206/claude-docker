@@ -29,37 +29,67 @@ export function mountTerminal(root) {
   let sessions = [];
   let currentSID = null;
   let ws = null;
+  let reconnectAttempts = 0;
+  let reconnectTimer = null;
+  let intentionalClose = false;
 
-  async function refreshSessions() {
-    try { sessions = await (await fetch("/api/sessions")).json(); } catch { sessions = []; }
-    const tabs = document.getElementById("sts");
-    tabs.innerHTML = "";
-    for (const s of sessions) {
-      const t = document.createElement("div");
-      t.className = "session-tab" + (s.id === currentSID ? " active" : "");
-      t.textContent = (s.name || s.id.slice(0, 8)) + (s.alive ? "" : " (dead)");
-      t.onclick = () => attach(s.id);
-      tabs.appendChild(t);
+  const CLOSE_REASONS = {
+    1000: "closed",
+    1006: "aborted (network/proxy)",
+    1008: "rejected (policy/auth)",
+    1011: "server error",
+  };
+
+  function status(msg) {
+    const el = document.getElementById("term-status");
+    if (el) el.textContent = msg;
+  }
+
+  function scheduleReconnect(sid) {
+    if (intentionalClose) return;
+    if (reconnectAttempts >= 6) {
+      status("giving up — reload or sign in again");
+      return;
     }
+    const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
+    reconnectAttempts++;
+    status(`reconnecting in ${Math.round(delay / 1000)}s…`);
+    reconnectTimer = setTimeout(() => attach(sid), delay);
   }
 
   function attach(sid) {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     currentSID = sid || "";
-    if (ws) ws.close();
+    if (ws) { ws.onclose = null; ws.close(); }
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws/terminal` + (sid ? `?session=${encodeURIComponent(sid)}` : ""));
-    document.getElementById("term-status").textContent = "connecting…";
-    ws.onopen = () => { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); };
+    status("connecting…");
+    ws.onopen = () => {
+      reconnectAttempts = 0;
+      ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    };
     ws.onmessage = (e) => {
       const raw = e.data;
       try {
         const m = JSON.parse(raw);
-        if (m.type === "session" && m.id) { currentSID = m.id; document.getElementById("term-status").textContent = "session " + m.id.slice(0, 8); refreshSessions(); return; }
-        if (m.type === "pty-exit") { document.getElementById("term-status").textContent = "session ended (exit " + (m.exitCode ?? "?") + ")"; refreshSessions(); return; }
-      } catch { /* terminal data */ }
+        if (m.type === "ping") return;
+        if (m.type === "session" && m.id) { currentSID = m.id; status("session " + m.id.slice(0, 8)); refreshSessions(); return; }
+        if (m.type === "pty-exit") { status("session ended (exit " + (m.exitCode ?? "?") + ")"); refreshSessions(); return; }
+        return;
+      } catch { /* binary/terminal data */ }
       term.write(raw);
     };
-    ws.onclose = () => { document.getElementById("term-status").textContent = "disconnected"; refreshSessions(); };
+    ws.onclose = (ev) => {
+      const reason = CLOSE_REASONS[ev.code] || `closed (${ev.code})`;
+      status("disconnected — " + reason);
+      refreshSessions();
+      if (ev.code === 1008) {
+        // auth/policy rejection: do not loop; tell user to sign in.
+        status("session expired — reload to sign in");
+        return;
+      }
+      scheduleReconnect(currentSID);
+    };
   }
 
   term.onData((d) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "input", data: d })));
@@ -69,8 +99,11 @@ export function mountTerminal(root) {
   document.getElementById("new-sess").onclick = () => attach("");
   document.getElementById("kill-sess").onclick = async () => {
     if (!currentSID) return;
+    intentionalClose = true;
     await fetch(`/api/sessions/${encodeURIComponent(currentSID)}`, { method: "DELETE" });
-    currentSID = null; term.reset(); attach(""); refreshSessions();
+    currentSID = null; term.reset();
+    intentionalClose = false;
+    attach(""); refreshSessions();
   };
 
   // Attach the most-recent session if any, else start a new one.
