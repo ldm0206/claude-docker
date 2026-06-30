@@ -66,28 +66,3 @@ func TestProvisionDirs_SkipsExistingClaude(t *testing.T) {
 		t.Errorf("existing .claude file lost: %v", err)
 	}
 }
-
-// TestEnsureSharedCredentialDir verifies the shared source dir is created
-// 0700 root-owned and is idempotent.
-func TestEnsureSharedCredentialDir(t *testing.T) {
-	data := t.TempDir()
-	orig := DataRoot
-	t.Cleanup(func() { DataRoot = orig })
-	DataRoot = data
-
-	if err := EnsureSharedCredentialDir(); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	dir := filepath.Join(data, "shared", "claude-config")
-	fi, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("shared dir missing: %v", err)
-	}
-	if fi.Mode().Perm() != 0o700 {
-		t.Fatalf("perm = %o, want 0700", fi.Mode().Perm())
-	}
-	// Idempotent: second call must not error.
-	if err := EnsureSharedCredentialDir(); err != nil {
-		t.Fatalf("second ensure: %v", err)
-	}
-}

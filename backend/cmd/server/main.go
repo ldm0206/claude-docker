@@ -57,9 +57,6 @@ func main() {
 	if err := store.BootstrapAdmin(db, cfg.BootstrapAdminUser, cfg.BootstrapAdminPassword, auth.HashPassword); err != nil {
 		log.Fatalf("[server] bootstrap admin: %v", err)
 	}
-	if err := system.EnsureSharedCredentialDir(); err != nil {
-		log.Fatalf("[server] ensure shared credential dir: %v", err)
-	}
 	if err := ensureUsersProvisioned(db, system.DefaultProvisioner); err != nil {
 		log.Fatalf("[server] provision existing users: %v", err)
 	}
