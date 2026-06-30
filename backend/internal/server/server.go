@@ -308,6 +308,8 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/api/admin/templates", s.handleAdminCreateTemplate)
 			r.Patch("/api/admin/templates/{id}", s.handleAdminUpdateTemplate)
 			r.Delete("/api/admin/templates/{id}", s.handleAdminDeleteTemplate)
+			r.Get("/api/admin/settings/template-user", s.handleAdminGetTemplateUser)
+			r.Put("/api/admin/settings/template-user", s.handleAdminSetTemplateUser)
 			// Admin credential-preset CRUD (T7) — secrets are sealed with masterKey
 			r.Get("/api/admin/credentials", s.handleAdminListCredentials)
 			r.Post("/api/admin/credentials", s.handleAdminCreateCredential)
