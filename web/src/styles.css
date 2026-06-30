@@ -155,5 +155,55 @@ table.tbl tr:hover td { background: var(--surface-2); }
 .files-actions { display:flex; gap:4px; justify-content:flex-end; }
 .term-status { font-size:12px; }
 
+/* --- Two-pane file manager (Plan 9 FM rewrite) --- */
+.fm { display:flex; gap:12px; height:calc(100vh - 150px); }
+.fm-tree { width:220px; flex:0 0 220px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:6px; overflow:auto; }
+.fm-tree-node { }
+.fm-tree-row { display:flex; align-items:center; gap:4px; padding:4px 6px; border-radius:var(--radius-sm); cursor:pointer; font-size:13px; color:var(--text-muted); white-space:nowrap; }
+.fm-tree-row:hover { background:var(--surface-2); color:var(--text); }
+.fm-tree-row.here { background:var(--sidebar-active); color:var(--text); font-weight:600; }
+.fm-tree-tw { width:12px; display:inline-block; color:var(--text-faint); font-size:10px; }
+.fm-tree-kids { margin-left:12px; border-left:1px dashed var(--border); }
+.fm-main { flex:1; display:flex; flex-direction:column; min-width:0; }
+.fm-toolbar { display:flex; align-items:center; gap:6px; margin-bottom:8px; flex-wrap:wrap; }
+.fm-search { max-width:160px; }
+.fm-status { font-size:12px; color:var(--text-faint); margin-bottom:6px; min-height:16px; }
+.fm-drop { flex:1; overflow:auto; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:6px; }
+.fm-drop.drag { border-color:var(--accent); background:var(--surface-2); }
+
+/* list view */
+.fm-list .fm-row { display:grid; grid-template-columns: 22px 24px 1fr 90px 160px; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid var(--border); font-size:13px; cursor:default; }
+.fm-list .fm-row:hover { background:var(--surface-2); }
+.fm-list .fm-row.sel { background:var(--sidebar-active); }
+.fm-list .fm-row.drop-target { outline:2px solid var(--accent); outline-offset:-2px; background:var(--surface-2); }
+.fm-check input { cursor:pointer; }
+.fm-glyph { font-size:16px; line-height:1; }
+.fm-glyph.sm { font-size:14px; text-align:center; }
+.fm-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* grid view */
+.fm-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap:8px; align-content:start; }
+.fm-grid .fm-cell { display:flex; flex-direction:column; align-items:center; padding:10px 6px; border-radius:var(--radius-sm); cursor:default; text-align:center; }
+.fm-grid .fm-cell:hover { background:var(--surface-2); }
+.fm-grid .fm-cell.sel { background:var(--sidebar-active); }
+.fm-grid .fm-glyph { font-size:30px; margin-bottom:6px; }
+.fm-grid .fm-label { font-size:12px; word-break:break-word; max-width:88px; }
+
+/* context menu */
+.fm-menu { position:fixed; z-index:60; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); box-shadow:0 6px 20px rgba(0,0,0,.18); padding:4px; min-width:160px; }
+.fm-menu-item { display:block; width:100%; text-align:left; background:transparent; border:none; padding:7px 10px; border-radius:var(--radius-sm); cursor:pointer; font-size:13px; color:var(--text); }
+.fm-menu-item:hover { background:var(--surface-2); }
+.fm-menu-item.danger { color:var(--bad); }
+
+/* preview */
+.fm-pre { margin:0; padding:14px 16px; font-family:var(--mono); font-size:12.5px; line-height:1.5; white-space:pre-wrap; word-break:break-word; max-height:78vh; overflow:auto; }
+
+@media (max-width: 760px) {
+  .fm { flex-direction:column; height:auto; }
+  .fm-tree { width:auto; max-height:160px; }
+  .fm-list .fm-row { grid-template-columns: 22px 1fr 80px; }
+  .fm-list .fm-glyph.sm, .fm-list .fm-meta:nth-of-type(2) { display:none; }
+}
+
 /* Refined dark palette contrast */
 :root[data-theme="dark"], :root:not([data-theme="light"]) { --shadow: 0 1px 3px rgba(0,0,0,.28); }

@@ -9,6 +9,14 @@ export async function postJson(url, body) {
   });
   return r;
 }
+export async function putJson(url, body) {
+  const r = await fetch(url, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  return r;
+}
 export async function patchJson(url, body) {
   const r = await fetch(url, {
     method: "PATCH",
