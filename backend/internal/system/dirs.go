@@ -7,6 +7,8 @@ import (
 	"regexp"
 )
 
+const sharedClaudeBin = "/opt/claude/bin/claude"
+
 var usernameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{1,31}$`)
 
 // UsernameRegex returns the compiled regex used for username validation,
@@ -50,7 +52,44 @@ func provisionDirs(homeRoot, username string, uid int) error {
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir .claude: %w", err)
 	}
-	return os.Chown(claudeDir, uid, uid)
+	if err := os.Chown(claudeDir, uid, uid); err != nil {
+		return err
+	}
+	// claude's launcher expects to find itself at ~/.local/bin/claude; if it is
+	// missing it prints "run claude install to repair", and `claude install` is
+	// blocked by DISABLE_UPDATES=1. Provision a symlink to the shared root-owned
+	// binary so every user resolves claude without needing the installer.
+	if err := linkClaudeBinary(home, uid); err != nil {
+		return fmt.Errorf("link claude binary: %w", err)
+	}
+	return nil
+}
+
+// linkClaudeBinary creates ~/.local/bin/claude → /opt/claude/bin/claude for the
+// user. Idempotent: skips when the link already points at the right target,
+// recreates it when it is missing or points elsewhere. Best-effort when the
+// shared binary is absent (e.g. on dev machines without /opt/claude): the
+// symlink is the user's PATH-prepend target, so we still create the dir and
+// attempt the link — a broken symlink is no worse than the missing-binary case
+// the Dockerfile already guards against in production.
+func linkClaudeBinary(home string, uid int) error {
+	localBin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chown(localBin, uid, uid); err != nil {
+		return err
+	}
+	link := filepath.Join(localBin, "claude")
+	if fi, err := os.Lstat(link); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			if tgt, _ := os.Readlink(link); tgt == sharedClaudeBin {
+				return nil // already correct
+			}
+		}
+		_ = os.Remove(link) // stale link or wrong target → recreate
+	}
+	return os.Symlink(sharedClaudeBin, link)
 }
 
 func ProvisionUserDirs(username string, uid int) error {
