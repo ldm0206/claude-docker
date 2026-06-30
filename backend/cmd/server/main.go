@@ -60,6 +60,11 @@ func main() {
 	if err := ensureUsersProvisioned(db, system.DefaultProvisioner); err != nil {
 		log.Fatalf("[server] provision existing users: %v", err)
 	}
+	if cfg.TemplateUser != "" {
+		if _, err := db.GetUserByUsername(cfg.TemplateUser); err != nil {
+			log.Printf("[server] warning: CLAUDE_TEMPLATE_USER=%q is not a known user; credential copy will be a no-op (%v)", cfg.TemplateUser, err)
+		}
+	}
 
 	// PTY factory: each sessions.Manager.Create builds a fresh *pty.Manager.
 	// Real creack/pty + gosu runtime is Linux-only.
