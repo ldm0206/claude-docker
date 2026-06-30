@@ -9,8 +9,8 @@ import (
 )
 
 // CopyTemplateCredentials copies the template user's .credentials.json into the
-// target user's claude-config dir. Source: <DataRoot>/<templateUser>/claude-config/
-// .credentials.json. Target: <DataRoot>/<targetUser>/claude-config/.credentials.json.
+// target user's ~/.claude dir. Source: <HomeRoot>/<templateUser>/.claude/
+// .credentials.json. Target: <HomeRoot>/<targetUser>/.claude/.credentials.json.
 // No-op (nil) if templateUser is empty, templateUser == targetUser, or the source
 // file is absent. The copied file is mode 0600, chown'd to uid. A per-step failure
 // is logged and skipped; it never blocks session creation.
@@ -18,8 +18,8 @@ func CopyTemplateCredentials(templateUser, targetUser string, uid int) error {
 	if templateUser == "" || templateUser == targetUser {
 		return nil
 	}
-	src := filepath.Join(DataRoot, templateUser, "claude-config", ".credentials.json")
-	dst := filepath.Join(DataRoot, targetUser, "claude-config", ".credentials.json")
+	src := filepath.Join(HomeRoot, templateUser, ".claude", ".credentials.json")
+	dst := filepath.Join(HomeRoot, targetUser, ".claude", ".credentials.json")
 	data, err := os.ReadFile(src)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

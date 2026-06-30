@@ -17,12 +17,12 @@ func writeCred(t *testing.T, dir, name, content string) {
 
 func TestCopyTemplateCredentials_HappyPath(t *testing.T) {
 	data := t.TempDir()
-	orig := DataRoot
-	t.Cleanup(func() { DataRoot = orig })
-	DataRoot = data
+	orig := HomeRoot
+	t.Cleanup(func() { HomeRoot = orig })
+	HomeRoot = data
 
-	srcDir := filepath.Join(data, "tpl", "claude-config")
-	dstDir := filepath.Join(data, "bob", "claude-config")
+	srcDir := filepath.Join(data, "tpl", ".claude")
+	dstDir := filepath.Join(data, "bob", ".claude")
 	if err := os.MkdirAll(srcDir, 0o700); err != nil { t.Fatal(err) }
 	if err := os.MkdirAll(dstDir, 0o700); err != nil { t.Fatal(err) }
 	writeCred(t, srcDir, ".credentials.json", `{"token":"abc"}`)
@@ -41,12 +41,12 @@ func TestCopyTemplateCredentials_HappyPath(t *testing.T) {
 // Only .credentials.json is copied; other files in the template dir are ignored.
 func TestCopyTemplateCredentials_OnlyCredentialsCopied(t *testing.T) {
 	data := t.TempDir()
-	orig := DataRoot
-	t.Cleanup(func() { DataRoot = orig })
-	DataRoot = data
+	orig := HomeRoot
+	t.Cleanup(func() { HomeRoot = orig })
+	HomeRoot = data
 
-	srcDir := filepath.Join(data, "tpl", "claude-config")
-	dstDir := filepath.Join(data, "bob", "claude-config")
+	srcDir := filepath.Join(data, "tpl", ".claude")
+	dstDir := filepath.Join(data, "bob", ".claude")
 	if err := os.MkdirAll(srcDir, 0o700); err != nil { t.Fatal(err) }
 	if err := os.MkdirAll(dstDir, 0o700); err != nil { t.Fatal(err) }
 	writeCred(t, srcDir, ".credentials.json", `x`)
@@ -69,10 +69,10 @@ func TestCopyTemplateCredentials_OnlyCredentialsCopied(t *testing.T) {
 
 func TestCopyTemplateCredentials_EmptyTemplateUser(t *testing.T) {
 	data := t.TempDir()
-	orig := DataRoot
-	t.Cleanup(func() { DataRoot = orig })
-	DataRoot = data
-	dstDir := filepath.Join(data, "bob", "claude-config")
+	orig := HomeRoot
+	t.Cleanup(func() { HomeRoot = orig })
+	HomeRoot = data
+	dstDir := filepath.Join(data, "bob", ".claude")
 	if err := os.MkdirAll(dstDir, 0o700); err != nil { t.Fatal(err) }
 
 	if err := CopyTemplateCredentials("", "bob", 2000); err != nil {
@@ -85,10 +85,10 @@ func TestCopyTemplateCredentials_EmptyTemplateUser(t *testing.T) {
 
 func TestCopyTemplateCredentials_SelfCopySkipped(t *testing.T) {
 	data := t.TempDir()
-	orig := DataRoot
-	t.Cleanup(func() { DataRoot = orig })
-	DataRoot = data
-	dir := filepath.Join(data, "tpl", "claude-config")
+	orig := HomeRoot
+	t.Cleanup(func() { HomeRoot = orig })
+	HomeRoot = data
+	dir := filepath.Join(data, "tpl", ".claude")
 	if err := os.MkdirAll(dir, 0o700); err != nil { t.Fatal(err) }
 	writeCred(t, dir, ".credentials.json", `orig`)
 
@@ -102,11 +102,11 @@ func TestCopyTemplateCredentials_SelfCopySkipped(t *testing.T) {
 
 func TestCopyTemplateCredentials_SourceMissing(t *testing.T) {
 	data := t.TempDir()
-	orig := DataRoot
-	t.Cleanup(func() { DataRoot = orig })
-	DataRoot = data
-	srcDir := filepath.Join(data, "tpl", "claude-config")
-	dstDir := filepath.Join(data, "bob", "claude-config")
+	orig := HomeRoot
+	t.Cleanup(func() { HomeRoot = orig })
+	HomeRoot = data
+	srcDir := filepath.Join(data, "tpl", ".claude")
+	dstDir := filepath.Join(data, "bob", ".claude")
 	if err := os.MkdirAll(srcDir, 0o700); err != nil { t.Fatal(err) } // exists, no .credentials.json
 	if err := os.MkdirAll(dstDir, 0o700); err != nil { t.Fatal(err) }
 
@@ -120,11 +120,11 @@ func TestCopyTemplateCredentials_SourceMissing(t *testing.T) {
 
 func TestCopyTemplateCredentials_Overwrite(t *testing.T) {
 	data := t.TempDir()
-	orig := DataRoot
-	t.Cleanup(func() { DataRoot = orig })
-	DataRoot = data
-	srcDir := filepath.Join(data, "tpl", "claude-config")
-	dstDir := filepath.Join(data, "bob", "claude-config")
+	orig := HomeRoot
+	t.Cleanup(func() { HomeRoot = orig })
+	HomeRoot = data
+	srcDir := filepath.Join(data, "tpl", ".claude")
+	dstDir := filepath.Join(data, "bob", ".claude")
 	if err := os.MkdirAll(srcDir, 0o700); err != nil { t.Fatal(err) }
 	if err := os.MkdirAll(dstDir, 0o700); err != nil { t.Fatal(err) }
 	writeCred(t, srcDir, ".credentials.json", `new`)
