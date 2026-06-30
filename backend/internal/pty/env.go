@@ -25,6 +25,15 @@ func BuildClaudeEnv(cfg *config.Config) []string {
 	set("HOME", "/home/claude")
 	path := envMap["PATH"]
 	set("PATH", fmt.Sprintf("%s:%s", claudeBin, path))
+	// Force a 256-color terminal so programs emit full ANSI colors and, with
+	// our entrypoint tmux/shim config, OSC 52 clipboard sequences that xterm.js
+	// forwards to the browser clipboard.
+	if _, ok := envMap["TERM"]; !ok {
+		set("TERM", "xterm-256color")
+	}
+	if _, ok := envMap["COLORTERM"]; !ok {
+		set("COLORTERM", "truecolor")
+	}
 	if _, ok := envMap["CLAUDE_CONFIG_DIR"]; !ok {
 		set("CLAUDE_CONFIG_DIR", "/home/claude/.claude")
 	}
@@ -72,6 +81,12 @@ func BuildUserEnv(cfg *config.Config, username, claudeConfigDir string) []string
 	set("HOME", fmt.Sprintf("/home/%s", username))
 	path := envMap["PATH"]
 	set("PATH", fmt.Sprintf("%s:%s", sharedClaudeBin, path))
+	if _, ok := envMap["TERM"]; !ok {
+		set("TERM", "xterm-256color")
+	}
+	if _, ok := envMap["COLORTERM"]; !ok {
+		set("COLORTERM", "truecolor")
+	}
 	set("CLAUDE_CONFIG_DIR", claudeConfigDir)
 	if cfg.AnthropicAPIKey != "" {
 		set("ANTHROPIC_API_KEY", cfg.AnthropicAPIKey)
