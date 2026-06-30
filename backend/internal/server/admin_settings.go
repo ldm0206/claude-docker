@@ -48,12 +48,16 @@ func (s *Server) handleAdminSetTemplateUser(w http.ResponseWriter, r *http.Reque
 	}
 	if b.TemplateUser != "" {
 		u, err := s.db.GetUserByUsername(b.TemplateUser)
-		if errors.Is(err, store.ErrNotFound) || u.Role != "admin" {
+		if errors.Is(err, store.ErrNotFound) {
 			writeJSON(w, 400, map[string]any{"error": "template user must be an existing admin user"})
 			return
 		}
 		if err != nil {
 			writeJSON(w, 500, map[string]any{"error": "lookup user"})
+			return
+		}
+		if u.Role != "admin" {
+			writeJSON(w, 400, map[string]any{"error": "template user must be an existing admin user"})
 			return
 		}
 	}
