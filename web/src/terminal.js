@@ -1,8 +1,8 @@
-import { Terminal } from "xterm";
+import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
 // mountTerminal(root): single-session terminal. On open it attaches the user's
 // one alive session (listed via /api/sessions); if none, the WS create path
