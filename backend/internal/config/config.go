@@ -19,6 +19,7 @@ type Config struct {
 	BootstrapAdminUser     string
 	BootstrapAdminPassword string
 	CookieSameSite         string
+	TemplateUser           string
 }
 
 func Load(get func(string) (string, bool)) (*Config, error) {
@@ -34,6 +35,7 @@ func Load(get func(string) (string, bool)) (*Config, error) {
 	c.BootstrapAdminUser = opt("BOOTSTRAP_ADMIN_USER")
 	c.BootstrapAdminPassword = opt("BOOTSTRAP_ADMIN_PASSWORD")
 	c.CookieSameSite = opt("COOKIE_SAMESITE")
+	c.TemplateUser = opt("CLAUDE_TEMPLATE_USER")
 	if c.CookieSameSite == "" {
 		c.CookieSameSite = "none"
 	}
