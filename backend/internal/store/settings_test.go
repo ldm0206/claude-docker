@@ -48,7 +48,10 @@ func TestSetSetting_Upsert(t *testing.T) {
 	if err := db.SetSetting("template_user", "bob"); err != nil {
 		t.Fatal(err)
 	}
-	v, _ := db.GetSetting("template_user")
+	v, err := db.GetSetting("template_user")
+	if err != nil {
+		t.Fatalf("upsert get: %v", err)
+	}
 	if v != "bob" {
 		t.Fatalf("upsert: got %q, want bob", v)
 	}
