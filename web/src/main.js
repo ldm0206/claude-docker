@@ -238,11 +238,15 @@ async function loadTemplateUser() {
     document.getElementById("tpl-note").textContent = "";
   }
   sel.onchange = async () => {
-    const r = await fetch("/api/admin/settings/template-user", {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template_user: sel.value }),
-    });
-    if (!r.ok) alert("Save failed (" + r.status + ")");
+    try {
+      const r = await fetch("/api/admin/settings/template-user", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template_user: sel.value }),
+      });
+      if (!r.ok) alert("Save failed (" + r.status + ")");
+    } catch {
+      alert("Save failed (network)");
+    }
     await loadTemplateUser();
   };
 }
