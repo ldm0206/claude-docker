@@ -93,7 +93,7 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 // own claude-config (0600, user-owned). It is never logged.
 func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
 	return func(_ string, sessionID string) []string {
-		if err := system.CopyTemplateCredentials(s.cfg.TemplateUser, u.Username, u.UID); err != nil {
+		if err := system.CopyTemplateCredentials(s.resolveTemplateUser(), u.Username, u.UID); err != nil {
 			log.Printf("[server] warning: copy template credentials for %s: %v", u.Username, err)
 		}
 		env := pty.BuildUserEnv(s.cfg, u.Username, "/data/"+u.Username+"/claude-config")

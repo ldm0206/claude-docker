@@ -204,12 +204,47 @@ async function refreshTraffic(root) {
 // View: Admin — Users
 // ---------------------------------------------------------------------------
 async function viewAdminUsers(root) {
-  root.innerHTML = `<div class="row"><span class="grow"></span><button class="btn" id="add-user">+ New user</button></div>
+  root.innerHTML = `<div class="card pads" style="margin-bottom:12px">
+      <div class="row">
+        <div><div class="lbl">Template user</div>
+        <select class="field" id="tpl-user" style="width:auto"></select></div>
+        <span class="grow"></span>
+        <span class="muted tiny" id="tpl-note"></span>
+      </div>
+      <p class="muted tiny" style="margin:8px 0 0">The template user's <code>.credentials.json</code> is copied into every user's terminal at session start. Must be an admin. Overrides CLAUDE_TEMPLATE_USER.</p>
+    </div>
+    <div class="row"><span class="grow"></span><button class="btn" id="add-user">+ New user</button></div>
     <div class="card" style="margin-top:12px;overflow:auto"><table class="tbl"><thead><tr>
       <th>User</th><th>Role</th><th>Status</th><th>Disk</th><th>Traffic</th><th>Sessions</th><th>Last login</th><th></th>
     </tr></thead><tbody id="utbody"></tbody></table></div>`;
   document.getElementById("add-user").onclick = () => userModal(null, () => viewAdminUsers(root));
   await refreshUsers();
+  await loadTemplateUser();
+}
+
+async function loadTemplateUser() {
+  const sel = document.getElementById("tpl-user");
+  if (!sel) return;
+  let admins = [];
+  try { admins = (await getJson("/api/admin/users")).filter(u => u.role === "admin"); } catch {}
+  // "(env / disabled)" option — empty value.
+  sel.innerHTML = `<option value="">(env / disabled)</option>` +
+    admins.map(a => `<option value="${esc(a.username)}">${esc(a.username)}</option>`).join("");
+  try {
+    const cur = await getJson("/api/admin/settings/template-user");
+    sel.value = cur.template_user || "";
+    document.getElementById("tpl-note").textContent = cur.template_user ? "" : "(using CLAUDE_TEMPLATE_USER if set)";
+  } catch {
+    document.getElementById("tpl-note").textContent = "";
+  }
+  sel.onchange = async () => {
+    const r = await fetch("/api/admin/settings/template-user", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template_user: sel.value }),
+    });
+    if (!r.ok) alert("Save failed (" + r.status + ")");
+    await loadTemplateUser();
+  };
 }
 
 async function refreshUsers() {
