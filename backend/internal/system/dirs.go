@@ -65,10 +65,11 @@ func ProvisionUserDirs(username string, uid int) error {
 	return provisionDirs(HomeRoot, DataRoot, username, uid)
 }
 
-// EnsureSharedCredentialDir idempotently creates the shared credential source
+// EnsureSharedCredentialDir idempotently creates the shared config source
 // dir <DataRoot>/shared/claude-config at mode 0700, root-owned. The operator
-// runs `claude login` against it; SyncSharedCredentials copies from it. Safe to
-// call on every boot.
+// runs `claude login` against it; SyncSharedConfig copies shared config files
+// (.credentials* and settings.json) from it into each user's claude-config.
+// Safe to call on every boot.
 func EnsureSharedCredentialDir() error {
 	dir := filepath.Join(DataRoot, "shared", "claude-config")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
