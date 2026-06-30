@@ -4,13 +4,13 @@ import { openWs, postJson, getJson } from "./api.js";
 // pairs from /ws/captures (initial list + push). Clear button.
 export function mountCaptures(root) {
   root.innerHTML = `
-    <div class="row" style="margin-bottom:10px">
+    <div class="row" style="margin-bottom:12px">
       <span class="muted tiny">Redacted request/response pairs from capture-enabled sessions.</span>
       <span class="grow"></span>
       <button class="btn tiny ghost" id="cap-clear">Clear</button>
     </div>
     <div class="cap-list" id="cap-list"></div>
-    <div class="card pads" id="cap-detail" style="display:none;font-family:var(--mono);font-size:12px;white-space:pre-wrap"></div>`;
+    <div class="card pads" id="cap-detail" style="display:none;font-family:var(--mono);font-size:12px;white-space:pre-wrap;margin-top:12px"></div>`;
 
   const list = document.getElementById("cap-list");
   const detail = document.getElementById("cap-detail");

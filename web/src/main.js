@@ -54,13 +54,13 @@ function renderLogin() {
   };
   pass.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
   shell("login-card", [
-    el("h1", { style: "color:var(--accent);margin:0 0 4px" }, "✦ Claude"),
-    el("p", { class: "muted", style: "margin:0 0 18px" }, "Sign in"),
-    el("label", { class: "lbl" }, "Username"), user, el("div", { style: "height:8px" }),
-    el("label", { class: "lbl" }, "Password"), pass, el("div", { style: "height:14px" }),
+    el("h1", { style: "color:var(--accent);margin:0 0 4px;font-size:20px" }, "Claude"),
+    el("p", { class: "muted", style: "margin:0 0 22px" }, "Sign in"),
+    el("label", { class: "lbl" }, "Username"), user, el("div", { style: "height:10px" }),
+    el("label", { class: "lbl" }, "Password"), pass, el("div", { style: "height:16px" }),
     go, el("div", { style: "height:10px" }), err,
   ]);
-  app.firstElementChild.style.maxWidth = "340px";
+  app.firstElementChild.style.maxWidth = "360px";
   app.firstElementChild.style.margin = "0 auto";
 }
 
@@ -105,19 +105,19 @@ function renderApp() {
 function renderSidebar() {
   const sb = document.getElementById("sb");
   const items = [
-    ["terminal", "▸ Terminal"],
-    ["files", " Files"],
-    ["traffic", " Traffic"],
+    ["terminal", "Terminal"],
+    ["files", "Files"],
+    ["traffic", "Traffic"],
   ];
   const admin = [
-    ["users", " Users"],
-    ["credentials", " Credentials"],
-    ["templates", " Templates"],
-    ["captures", " Captures"],
-    ["audit", " Audit"],
+    ["users", "Users"],
+    ["credentials", "Credentials"],
+    ["templates", "Templates"],
+    ["captures", "Captures"],
+    ["audit", "Audit"],
   ];
   sb.innerHTML = "";
-  sb.appendChild(el("div", { class: "brand" }, "✦ Claude"));
+  sb.appendChild(el("div", { class: "brand" }, "Claude"));
   for (const [k, label] of items) sb.appendChild(navBtn(k, label));
   if (self.role === "admin") {
     sb.appendChild(el("div", { class: "nav-group-label" }, "Admin"));
@@ -181,7 +181,7 @@ function viewFiles(root) {
 // ---------------------------------------------------------------------------
 function viewTraffic(root) {
   root.innerHTML = `<div class="meters" id="meters"><span class="muted">Loading…</span></div>
-    <div class="card pads" style="margin-top:14px"><h3 style="margin:0 0 8px;font-size:14px">Monthly traffic</h3><div id="trows" class="muted">—</div></div>`;
+    <div class="card pads" style="margin-top:14px"><h3 style="margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint)">Monthly traffic</h3><div id="trows" class="muted">—</div></div>`;
   // usage is admin-only endpoint; for regular users show their own traffic via /api/sessions? no — there's no user-self traffic endpoint yet.
   // Use /api/admin/users/:id/usage if admin (need own id); else show a note.
   refreshTraffic(root);

@@ -13,7 +13,7 @@ export function mountFiles(root) {
     </div>
     <div class="files-drop" id="drop">
       <table class="tbl" id="ftbl"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr></thead><tbody id="fbody"></tbody></table>
-      <div class="files-empty muted" id="fempty">Empty folder. Drag files here to upload.</div>
+      <div class="files-empty muted" id="fempty" style="padding:32px">Empty folder — drag files here to upload.</div>
     </div>
     <input type="file" id="file-input" multiple style="display:none">`;
 
@@ -102,9 +102,9 @@ export function mountFiles(root) {
   async function openEditor(path) {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
-    overlay.innerHTML = `<div class="modal" style="width:min(720px,94vw)"><div class="hd"><b>${esc(path)}</b></div>
-      <div class="bd"><textarea class="field" id="ed-area" style="min-height:50vh;font-family:var(--mono);font-size:13px"></textarea>
-      <div style="height:10px"></div><button class="btn" id="ed-save">Save</button> <button class="btn ghost" id="ed-cancel">Cancel</button>
+    overlay.innerHTML = `<div class="modal" style="width:min(760px,94vw)"><div class="hd"><b>${esc(path)}</b></div>
+      <div class="bd"><textarea class="field" id="ed-area" style="min-height:52vh;font-family:var(--mono);font-size:13px;border-radius:6px"></textarea>
+      <div style="height:12px"></div><button class="btn" id="ed-save">Save</button> <button class="btn ghost" id="ed-cancel">Cancel</button>
       <span class="muted tiny" id="ed-msg" style="margin-left:8px"></span></div></div>`;
     document.getElementById("app").appendChild(overlay);
     const area = overlay.querySelector("#ed-area");
