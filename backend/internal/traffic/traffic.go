@@ -64,10 +64,11 @@ type NftCLI struct {
 // after a startup probe to put it into no-op mode.
 func New(nft NftController, db *store.DB) *Service {
 	return &Service{
-		Nft:   nft,
-		DB:    db,
-		last:  make(map[int][2]int64),
-		avail: true,
+		Nft:       nft,
+		DB:        db,
+		last:      make(map[int][2]int64),
+		installed: make(map[int]bool),
+		avail:     true,
 	}
 }
 
@@ -79,6 +80,7 @@ type Service struct {
 	DB    *store.DB
 	mu    sync.Mutex
 	last  map[int][2]int64 // uid -> {rx, tx} last cumulative reading
+	installed map[int]bool // uid -> nft counters installed successfully
 	avail bool              // false → sampler runs but writes nothing
 }
 
@@ -161,9 +163,25 @@ func (s *Service) SampleOnce(uids []int) error {
 	for _, uid := range uids {
 		last[uid] = s.last[uid]
 	}
+	// Track which uids have been installed so we don't re-install every tick.
+	installed := s.installed
 	s.mu.Unlock()
 
 	for _, uid := range uids {
+		// First time we see this uid: try to install its nft counters. On
+		// failure log once and skip — do NOT set avail=false globally (one
+		// bad uid shouldn't kill accounting for the others). Re-attempt next
+		// tick until it succeeds (e.g. nft was temporarily unavailable).
+		if !installed[uid] {
+			if err := s.Nft.Install(uid); err != nil {
+				log.Printf("traffic: install uid %d: %v (will retry)", uid, err)
+				continue
+			}
+			installed[uid] = true
+			s.mu.Lock()
+			s.installed[uid] = true
+			s.mu.Unlock()
+		}
 		rx, tx, err := s.Nft.Read(uid)
 		if err != nil {
 			log.Printf("traffic: read uid %d: %v (skipping)", uid, err)
@@ -204,53 +222,97 @@ func (s *Service) SampleOnce(uids []int) error {
 
 // --- NftCLI: real shell-out implementation (Linux runtime; compiles on Windows) ---
 
-// Install creates an nft counter named uc_<uid> on the claude_traffic table
-// matched to the user's cgroup. Returns an error if `nft` is missing or the
-// command fails (e.g. no CAP_NET_ADMIN).
-func (n *NftCLI) Install(uid int) error {
+// ensureTable creates the claude_traffic table + output/input chains once.
+// Idempotent: `nft add table` errors on existing tables; we swallow that.
+// The chains are created without a hook — they are referenced by per-uid
+// rules added later via Install. We use the output chain for egress (tx /
+// upload, matched by skuid = socket-owning uid) and a separate counter set
+// for ingress (rx / download, matched by dport-skuid on the input chain).
+//
+// NOTE: ingress accounting by skuid requires the INPUT hook + connection
+// metadata; for the first cut we count tx via skuid on output, and rx via a
+// second counter on input matched to the same uid. Both use `meta skuid`
+// (socket owner uid), which works without writable cgroup v2 (the container
+// has /sys/fs/cgroup mounted read-only + nsdelegate, so cgroup-path matching
+// is unavailable, but skuid matching is not cgroup-dependent).
+func (n *NftCLI) ensureTable() error {
 	table := n.table()
-	name := counterName(uid)
-	// Add a rule with a counter in the existing chain. The cgroup match uses
-	// the user's uid via a classid-style match; real env wires the cgroup path.
-	// Command form kept simple; T7 may refine the exact ruleset.
-	if err := runNft("add", "rule", table, "counter", "name", name,
-		"counter", "packets", "0", "bytes", "0"); err != nil {
-		return fmt.Errorf("nft install uid %d: %w", uid, err)
+	// create table; ignore "exists" failure
+	if err := runNft("add", "table", table); err != nil {
+		if !strings.Contains(err.Error(), "exists") {
+			return fmt.Errorf("nft add table: %w", err)
+		}
+	}
+	// output chain (egress / tx). Chain name "cout".
+	if err := runNft("add", "chain", table, "cout", "{ type filter hook output priority 0; }"); err != nil {
+		if !strings.Contains(err.Error(), "exists") {
+			return fmt.Errorf("nft add chain cout: %w", err)
+		}
+	}
+	// input chain (ingress / rx). Chain name "cin".
+	if err := runNft("add", "chain", table, "cin", "{ type filter hook input priority 0; }"); err != nil {
+		if !strings.Contains(err.Error(), "exists") {
+			return fmt.Errorf("nft add chain cin: %w", err)
+		}
+	}
+	return nil
+}
+
+// Install creates per-uid egress + ingress byte counters matched by `meta
+// skuid` so the user's own outbound/inbound socket bytes are counted. Returns
+// an error if `nft` is missing or the command fails (e.g. no CAP_NET_ADMIN).
+// Idempotent: a duplicate rule on the same chain is a no-op error we swallow.
+func (n *NftCLI) Install(uid int) error {
+	if err := n.ensureTable(); err != nil {
+		return err
+	}
+	table := n.table()
+	uidStr := strconv.Itoa(uid)
+	// egress (tx): packets the user sends. skuid matches the socket owner.
+	txName := counterName(uid, "out")
+	if err := runNft("add", "rule", table, "cout",
+		"meta", "skuid", uidStr, "counter", "name", txName, "counter"); err != nil {
+		if !strings.Contains(err.Error(), "exists") {
+			return fmt.Errorf("nft install tx uid %d: %w", uid, err)
+		}
+	}
+	// ingress (rx): packets delivered to the user. dport-skuid is not a thing;
+	// on the input hook the receiving socket's uid is available via skuid for
+	// established connections (conntrack reuses the original socket's uid).
+	rxName := counterName(uid, "in")
+	if err := runNft("add", "rule", table, "cin",
+		"meta", "skuid", uidStr, "counter", "name", rxName, "counter"); err != nil {
+		if !strings.Contains(err.Error(), "exists") {
+			return fmt.Errorf("nft install rx uid %d: %w", uid, err)
+		}
 	}
 	return nil
 }
 
 // Read returns the cumulative rx (download) and tx (upload) byte counts for
-// the user's counter. Output of `nft list counters` is parsed.
+// the user's two counters. Output of `nft -j list counters` is parsed.
 func (n *NftCLI) Read(uid int) (rx, tx int64, err error) {
 	table := n.table()
-	name := counterName(uid)
-	// `nft -j list counters` returns JSON; we look for the matching name and
-	// read its bytes value. rx/tx distinction depends on rule direction; for
-	// the unit-tested seam we expose both values as the same counter's bytes.
 	out, err := exec.Command("nft", "-j", "list", "counters", "table", table).Output()
 	if err != nil {
 		return 0, 0, fmt.Errorf("nft list counters uid %d: %w", uid, err)
 	}
-	// Minimal parse: find "name":"uc_<uid>" then the nearest "bytes":N.
-	// JSON structure from nft is nested; a robust parse belongs in T7 once the
-	// ruleset is finalized. For now extract via string scan so the file stays
-	// self-contained and testable on Linux.
-	b, ok := scanCounterBytes(string(out), name)
-	if !ok {
-		return 0, 0, nil
-	}
-	// Without directional rules we report the same counter for rx and tx; T7
-	// splits this into ingress/egress counters once the ruleset is locked.
-	return b, b, nil
+	s := string(out)
+	tx, _ = scanCounterBytes(s, counterName(uid, "out"))
+	rx, _ = scanCounterBytes(s, counterName(uid, "in"))
+	return rx, tx, nil
 }
 
-// Remove deletes the user's counter.
+// Remove deletes the user's two counters. Best-effort: leaves the table/chain.
 func (n *NftCLI) Remove(uid int) error {
 	table := n.table()
-	name := counterName(uid)
-	if err := runNft("delete", "counter", table, name); err != nil {
-		return fmt.Errorf("nft remove uid %d: %w", uid, err)
+	for _, suffix := range []string{"in", "out"} {
+		if err := runNft("delete", "counter", table, counterName(uid, suffix)); err != nil {
+			// ignore "not found" so Remove is idempotent
+			if !strings.Contains(err.Error(), "No such") {
+				return fmt.Errorf("nft remove uid %d %s: %w", uid, suffix, err)
+			}
+		}
 	}
 	return nil
 }
@@ -262,7 +324,9 @@ func (n *NftCLI) table() string {
 	return "inet claude_traffic"
 }
 
-func counterName(uid int) string { return "uc_" + strconv.Itoa(uid) }
+// counterName returns the nft counter name for a uid + direction suffix.
+// Direction is "in" (rx/download) or "out" (tx/upload).
+func counterName(uid int, dir string) string { return "uc_" + strconv.Itoa(uid) + "_" + dir }
 
 // runNft invokes the nft binary with the given args. It only uses os/exec, so
 // it compiles on Windows; it simply fails at runtime there.
