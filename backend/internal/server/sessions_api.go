@@ -94,14 +94,20 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]map[string]any, len(sessions))
-	for i, s := range sessions {
-		out[i] = map[string]any{
-			"id":         s.ID,
-			"name":       s.Name,
-			"startedAt":  s.StartedAt,
-			"lastSeenAt": s.LastSeenAt,
-			"alive":      s.Alive,
+	for i, sess := range sessions {
+		m := map[string]any{
+			"id":         sess.ID,
+			"name":       sess.Name,
+			"startedAt":  sess.StartedAt,
+			"lastSeenAt": sess.LastSeenAt,
+			"alive":      sess.Alive,
 		}
+		// captureOn is admin-only context for the Captures panel toggle. Regular
+		// users never see it (capture is an admin feature).
+		if u.Role == "admin" && s.capture != nil {
+			m["captureOn"] = s.capture.IsEnabled(sess.ID)
+		}
+		out[i] = m
 	}
 	writeJSON(w, 200, out)
 }

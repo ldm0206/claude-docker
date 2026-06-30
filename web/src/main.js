@@ -347,7 +347,11 @@ function tplModal() {
       memory_max_bytes: (parseInt(overlay.querySelector("#tm").value) || 1024) * 1024 * 1024,
     });
     if (r.ok) { overlay.remove(); refreshTpls(); }
-    else overlay.querySelector("#te").textContent = "Failed (" + r.status + ")";
+    else {
+      let msg = `Failed (${r.status})`;
+      try { const j = await r.json(); if (j.error) msg = j.error; } catch {}
+      overlay.querySelector("#te").textContent = msg;
+    }
   };
 }
 
