@@ -78,8 +78,9 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 
 // buildUserEnvFactory returns an EnvFactory that resolves the per-user env
 // slice lazily at PTY spawn time. It first syncs the operator's shared
-// credential files into the user's claude-config dir (non-fatal on failure),
-// then builds the env. Returning a function (not a precomputed slice) lets a
+// config files (credentials + settings.json) into the user's claude-config dir
+// (non-fatal on failure), then builds the env. Returning a function (not a
+// precomputed slice) lets a
 // re-login take effect on the next Create/Restart without restarting the
 // server.
 //
@@ -89,12 +90,12 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 //   - sets HTTP_PROXY / HTTPS_PROXY (+lower) = capture.ProxyURL();
 //   - REMOVES ALL_PROXY / all_proxy so claude doesn't bypass the proxy via SOCKS.
 //
-// SECURITY: the shared credential file is copied onto disk under the user's
-// own claude-config (0600, user-owned). It is never logged.
+// SECURITY: the shared config files are copied onto disk under the user's
+// own claude-config (0600, user-owned). They are never logged.
 func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
 	return func(_ string, sessionID string) []string {
-		if err := system.SyncSharedCredentials(u.Username, u.UID); err != nil {
-			log.Printf("[server] warning: sync shared credentials for %s: %v", u.Username, err)
+		if err := system.SyncSharedConfig(u.Username, u.UID); err != nil {
+			log.Printf("[server] warning: sync shared config for %s: %v", u.Username, err)
 		}
 		env := pty.BuildUserEnv(s.cfg, u.Username, "/data/"+u.Username+"/claude-config")
 		return s.applyCaptureRouting(env, sessionID)
