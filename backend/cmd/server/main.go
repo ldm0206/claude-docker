@@ -16,7 +16,6 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
 	"github.com/ldm0206/claude-docker/backend/internal/quota"
-	"github.com/ldm0206/claude-docker/backend/internal/secrets"
 	ser "github.com/ldm0206/claude-docker/backend/internal/server"
 	"github.com/ldm0206/claude-docker/backend/internal/sessions"
 	"github.com/ldm0206/claude-docker/backend/internal/store"
@@ -71,11 +70,6 @@ func main() {
 	factory := func(o pty.Options) sessions.PTY { return pty.New(o) }
 	sess := sessions.NewManager(db, factory)
 
-	masterKey, merr := secrets.MasterKey(envLookup)
-	if merr != nil {
-		log.Printf("[server] warning: MASTER_KEY not configured — credential endpoints disabled (%v)", merr)
-	}
-
 	// --- Quota: disk soft-limit monitor + cgroup v2 cpu/mem (Linux runtime) ---
 	qsvc := quota.New(quota.DuDiskUsage{}, quota.CgroupFSWriter{}, "/home")
 
@@ -100,10 +94,10 @@ func main() {
 	}
 	caRoot := os.Getenv("CLAUDE_DEBUG_SSL_CA_DIR")
 	capStore := capture.NewStore()
-	capRunner := capture.NewMITMRunner(caRoot, nil, capStore, db, masterKey)
-	capSvc := capture.NewService(capRunner, capStore, db, masterKey, capPort)
+	capRunner := capture.NewMITMRunner(caRoot, nil, capStore, db)
+	capSvc := capture.NewService(capRunner, capStore, db, capPort)
 
-	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, masterKey, qsvc, tsvc, capSvc)
+	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, qsvc, tsvc, capSvc)
 
 	// Background loops.
 	ctx, cancel := context.WithCancel(context.Background())

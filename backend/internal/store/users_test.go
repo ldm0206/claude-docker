@@ -71,30 +71,6 @@ func TestBindTemplate(t *testing.T) {
 	}
 }
 
-func TestBindCredential(t *testing.T) {
-	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer db.Close()
-
-	preset, _ := db.CreatePreset(CredentialPreset{
-		Name: "creds", EncryptedBlob: []byte{0x01}, Note: "",
-	})
-	u := helperCreateUser(t, db, "bindcred")
-
-	if err := db.BindCredential(u.ID, preset.ID); err != nil {
-		t.Fatalf("bind credential: %v", err)
-	}
-	got, err := db.GetUserByID(u.ID)
-	if err != nil {
-		t.Fatalf("get user: %v", err)
-	}
-	if !got.CredentialPresetID.Valid || int(got.CredentialPresetID.Int64) != preset.ID {
-		t.Fatalf("credential_preset_id = %v, want %d", got.CredentialPresetID, preset.ID)
-	}
-}
-
 // TestTouchLogin_RecordsIP verifies TouchLogin now persists last_login_ip.
 func TestTouchLogin_RecordsIP(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))

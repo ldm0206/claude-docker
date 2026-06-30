@@ -20,13 +20,12 @@ type createUserReq struct {
 	Password string `json:"password"`
 	Role     string `json:"role"`
 
-	// T7: optional binds applied after CreateUser. Both default to nil
-	// (omitted) which preserves the pre-T7 behavior. When provided they are
-	// validated against the DB and applied via db.BindTemplate /
-	// db.BindCredential. A bind failure does NOT roll back CreateUser (the row
-	// is already valid; the admin can re-bind via a future endpoint).
-	RoleTemplateID     *int `json:"role_template_id,omitempty"`
-	CredentialPresetID *int `json:"credential_preset_id,omitempty"`
+	// T7: optional bind applied after CreateUser. Defaults to nil (omitted)
+	// which preserves the pre-T7 behavior. When provided it is validated
+	// against the DB and applied via db.BindTemplate. A bind failure does NOT
+	// roll back CreateUser (the row is already valid; the admin can re-bind
+	// via a future endpoint).
+	RoleTemplateID *int `json:"role_template_id,omitempty"`
 }
 
 func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -79,10 +78,10 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// T7: apply optional template / credential binds. These run AFTER the user
-	// row is committed and provisioned — a bind failure does not roll back the
-	// user (the admin can re-bind later). Errors here surface as 500 but the
-	// user IS created; the response still returns 201 with the user id.
+	// T7: apply optional template bind. This runs AFTER the user row is
+	// committed and provisioned — a bind failure does not roll back the user
+	// (the admin can re-bind later). Errors here surface as 500 but the user
+	// IS created; the response still returns 201 with the user id.
 	if b.RoleTemplateID != nil {
 		if _, err := s.db.GetTemplate(*b.RoleTemplateID); err != nil {
 			writeJSON(w, 400, map[string]any{"error": "role_template_id not found"})
@@ -90,16 +89,6 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.db.BindTemplate(u.ID, *b.RoleTemplateID); err != nil {
 			writeJSON(w, 500, map[string]any{"error": "bind template failed"})
-			return
-		}
-	}
-	if b.CredentialPresetID != nil {
-		if _, err := s.db.GetPreset(*b.CredentialPresetID); err != nil {
-			writeJSON(w, 400, map[string]any{"error": "credential_preset_id not found"})
-			return
-		}
-		if err := s.db.BindCredential(u.ID, *b.CredentialPresetID); err != nil {
-			writeJSON(w, 500, map[string]any{"error": "bind credential failed"})
 			return
 		}
 	}

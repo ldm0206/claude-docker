@@ -15,9 +15,9 @@ type MITMRunner struct{}
 
 // NewMITMRunner returns a stub runner on non-Linux platforms. The arguments
 // mirror the Linux constructor signature (caRootPath, in-memory CA, store, db
-// seam, masterKey) but are ignored on non-Linux, where the real go-mitmproxy
-// runner cannot run.
-func NewMITMRunner(_ string, _ any, _ *Store, _ any, _ []byte) *MITMRunner {
+// seam) but are ignored on non-Linux, where the real go-mitmproxy runner
+// cannot run.
+func NewMITMRunner(_ string, _ any, _ *Store, _ any) *MITMRunner {
 	return &MITMRunner{}
 }
 

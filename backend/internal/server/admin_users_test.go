@@ -95,7 +95,7 @@ func newTestServerWithAdmin(t *testing.T) (*Server, *fakeProvisioner, *store.DB)
 	// tests never create real sessions, so the factory is never invoked; it
 	// just has to be non-nil so server.New doesn't panic.
 	mgr := sessions.NewManager(db, newFakePTYFactoryForAdmin())
-	srv := New(cfg, db, fake, mgr, nil, nil, nil, nil)
+	srv := New(cfg, db, fake, mgr, nil, nil, nil)
 	return srv, fake, db
 }
 
@@ -452,33 +452,27 @@ func TestAdminCreateUser_MissingFields(t *testing.T) {
 var _ system.AccountProvisioner = (*fakeProvisioner)(nil)
 
 // ---------------------------------------------------------------------------
-// T7: create-user now accepts optional role_template_id + credential_preset_id
+// T7: create-user now accepts an optional role_template_id
 // ---------------------------------------------------------------------------
 
-// TestAdminCreateUser_BindsTemplateAndPreset verifies that when the create-user
-// body carries role_template_id / credential_preset_id, the admin handler binds
-// them after CreateUser, and EffectiveMaxSessions reflects the template.
-func TestAdminCreateUser_BindsTemplateAndPreset(t *testing.T) {
+// TestAdminCreateUser_BindsTemplate verifies that when the create-user body
+// carries role_template_id, the admin handler binds it after CreateUser, and
+// EffectiveMaxSessions reflects the template.
+func TestAdminCreateUser_BindsTemplate(t *testing.T) {
 	s, _, db := newTestServerWithAdmin(t)
 	cookie := adminCookie(t, s)
 
-	// Seed a template (max_sessions=7) and a preset directly in the DB.
+	// Seed a template (max_sessions=7) directly in the DB.
 	tmpl, err := db.CreateTemplate(store.RoleTemplate{
 		Name: "power", DiskQuotaBytes: 0, CPUQuota: "1.0", MemoryMaxBytes: 0, MaxSessions: 7, Permissions: "{}",
 	})
 	if err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	preset, err := db.CreatePreset(store.CredentialPreset{
-		Name: "p", EncryptedBlob: []byte{0x01}, Note: "",
-	})
-	if err != nil {
-		t.Fatalf("create preset: %v", err)
-	}
 
 	body := fmt.Sprintf(
-		`{"username":"frank","password":"pw","role":"user","role_template_id":%d,"credential_preset_id":%d}`,
-		tmpl.ID, preset.ID,
+		`{"username":"frank","password":"pw","role":"user","role_template_id":%d}`,
+		tmpl.ID,
 	)
 	req := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -496,9 +490,6 @@ func TestAdminCreateUser_BindsTemplateAndPreset(t *testing.T) {
 	if !u.RoleTemplateID.Valid || int(u.RoleTemplateID.Int64) != tmpl.ID {
 		t.Fatalf("role_template_id not bound: %+v", u.RoleTemplateID)
 	}
-	if !u.CredentialPresetID.Valid || int(u.CredentialPresetID.Int64) != preset.ID {
-		t.Fatalf("credential_preset_id not bound: %+v", u.CredentialPresetID)
-	}
 	// EffectiveMaxSessions should resolve via the bound template (7).
 	eff, err := db.EffectiveMaxSessions(u.ID)
 	if err != nil {
@@ -509,38 +500,8 @@ func TestAdminCreateUser_BindsTemplateAndPreset(t *testing.T) {
 	}
 }
 
-// TestAdminCreateUser_BindsTemplateOnly verifies only the provided bind is
-// applied (credential_preset_id omitted → only template bound).
-func TestAdminCreateUser_BindsTemplateOnly(t *testing.T) {
-	s, _, db := newTestServerWithAdmin(t)
-	cookie := adminCookie(t, s)
-	tmpl, _ := db.CreateTemplate(store.RoleTemplate{
-		Name: "t2", CPUQuota: "1.0", MaxSessions: 4, Permissions: "{}",
-	})
-
-	body := fmt.Sprintf(
-		`{"username":"grace","password":"pw","role":"user","role_template_id":%d}`,
-		tmpl.ID,
-	)
-	req := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: "session", Value: cookie})
-	w := httptest.NewRecorder()
-	s.Routes().ServeHTTP(w, req)
-	if w.Code != 201 {
-		t.Fatalf("create user: expected 201, got %d; body=%s", w.Code, w.Body.String())
-	}
-	u, _ := db.GetUserByUsername("grace")
-	if !u.RoleTemplateID.Valid || int(u.RoleTemplateID.Int64) != tmpl.ID {
-		t.Fatalf("template not bound: %+v", u.RoleTemplateID)
-	}
-	if u.CredentialPresetID.Valid {
-		t.Fatalf("credential_preset_id should NOT be bound: %+v", u.CredentialPresetID)
-	}
-}
-
 // TestAdminCreateUser_NoBindWhenIDsAbsent confirms the existing behavior is
-// preserved when the new optional fields are omitted entirely.
+// preserved when the optional field is omitted entirely.
 func TestAdminCreateUser_NoBindWhenIDsAbsent(t *testing.T) {
 	s, _, db := newTestServerWithAdmin(t)
 	cookie := adminCookie(t, s)
@@ -556,8 +517,5 @@ func TestAdminCreateUser_NoBindWhenIDsAbsent(t *testing.T) {
 	u, _ := db.GetUserByUsername("heidi")
 	if u.RoleTemplateID.Valid {
 		t.Fatalf("template unexpectedly bound: %+v", u.RoleTemplateID)
-	}
-	if u.CredentialPresetID.Valid {
-		t.Fatalf("preset unexpectedly bound: %+v", u.CredentialPresetID)
 	}
 }

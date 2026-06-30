@@ -63,7 +63,7 @@ func (f *fakeRunner) addr() string {
 
 func newService(t *testing.T, fr *fakeRunner) *Service {
 	t.Helper()
-	return NewService(fr, NewStore(), nil, nil, 8888)
+	return NewService(fr, NewStore(), nil, 8888)
 }
 
 func TestEnable_StartsRunnerOnFirstEnable(t *testing.T) {
@@ -183,7 +183,7 @@ func TestDisable_DoesNotStopWhenAnotherSessionStillEnabled(t *testing.T) {
 
 func TestProxyURL(t *testing.T) {
 	fr := &fakeRunner{}
-	s := NewService(fr, NewStore(), nil, nil, 9090)
+	s := NewService(fr, NewStore(), nil, 9090)
 	if got, want := s.ProxyURL(), "http://127.0.0.1:9090"; got != want {
 		t.Fatalf("ProxyURL = %q, want %q", got, want)
 	}
@@ -213,7 +213,7 @@ func TestDisable_DisabledWhenNotEnabledNoOp(t *testing.T) {
 func TestStore(t *testing.T) {
 	fr := &fakeRunner{}
 	st := NewStore()
-	s := NewService(fr, st, nil, nil, 8888)
+	s := NewService(fr, st, nil, 8888)
 	if s.Store() != st {
 		t.Fatal("Store() does not return the injected store")
 	}

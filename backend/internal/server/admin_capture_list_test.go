@@ -183,9 +183,9 @@ func TestCaptureFanout_InitialListThenPush(t *testing.T) {
 // fanout). The proxy runner is a no-fake; Enable is not exercised here.
 func newCaptureServiceWithStore(t *testing.T, st *capture.Store) *capture.Service {
 	t.Helper()
-	// capture.NewService(runner, store, db, masterKey, port) — runner can be a
+	// capture.NewService(runner, store, db, port) — runner can be a
 	// minimal fake satisfying the ProxyRunner interface.
-	return capture.NewService(fakeProxyRunner{}, st, nil, nil, 8888)
+	return capture.NewService(fakeProxyRunner{}, st, nil, 8888)
 }
 
 type fakeProxyRunner struct{}

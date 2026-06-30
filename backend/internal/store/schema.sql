@@ -6,7 +6,6 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL CHECK(role IN ('admin','user')),
   must_change_password INTEGER NOT NULL DEFAULT 1,
   role_template_id INTEGER,
-  credential_preset_id INTEGER,
   suspended INTEGER NOT NULL DEFAULT 0,
   disk_quota_bytes INTEGER,
   max_sessions INTEGER,
@@ -22,14 +21,6 @@ CREATE TABLE IF NOT EXISTS role_templates (
   memory_max_bytes INTEGER NOT NULL,
   max_sessions INTEGER NOT NULL,
   permissions TEXT NOT NULL DEFAULT '{}',
-  created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS credential_presets (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT UNIQUE NOT NULL,
-  encrypted_blob BLOB NOT NULL,
-  note TEXT,
   created_at INTEGER NOT NULL
 );
 

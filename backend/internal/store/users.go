@@ -15,7 +15,6 @@ type User struct {
 	Role               string
 	MustChangePassword bool
 	RoleTemplateID     sql.NullInt64
-	CredentialPresetID sql.NullInt64
 	Suspended          bool
 	DiskQuotaBytes     sql.NullInt64
 	MaxSessions        sql.NullInt64
@@ -54,12 +53,12 @@ func (d *DB) CreateUser(u User) (User, error) {
 }
 
 func (d *DB) GetUserByUsername(name string) (User, error) {
-	row := d.sql.QueryRow(`SELECT id, uid, username, password_hash, role, must_change_password, suspended, role_template_id, credential_preset_id, disk_quota_bytes, max_sessions, created_at, last_login_at, COALESCE(last_login_ip, '') AS last_login_ip FROM users WHERE username = ?`, name)
+	row := d.sql.QueryRow(`SELECT id, uid, username, password_hash, role, must_change_password, suspended, role_template_id, disk_quota_bytes, max_sessions, created_at, last_login_at, COALESCE(last_login_ip, '') AS last_login_ip FROM users WHERE username = ?`, name)
 	return scanUser(row)
 }
 
 func (d *DB) GetUserByID(id int) (User, error) {
-	row := d.sql.QueryRow(`SELECT id, uid, username, password_hash, role, must_change_password, suspended, role_template_id, credential_preset_id, disk_quota_bytes, max_sessions, created_at, last_login_at, COALESCE(last_login_ip, '') AS last_login_ip FROM users WHERE id = ?`, id)
+	row := d.sql.QueryRow(`SELECT id, uid, username, password_hash, role, must_change_password, suspended, role_template_id, disk_quota_bytes, max_sessions, created_at, last_login_at, COALESCE(last_login_ip, '') AS last_login_ip FROM users WHERE id = ?`, id)
 	return scanUser(row)
 }
 
@@ -69,7 +68,7 @@ func (d *DB) SetPassword(id int, hash string) error {
 }
 
 func (d *DB) ListUsers() ([]User, error) {
-	rows, err := d.sql.Query(`SELECT id, uid, username, password_hash, role, must_change_password, suspended, role_template_id, credential_preset_id, disk_quota_bytes, max_sessions, created_at, last_login_at, COALESCE(last_login_ip, '') AS last_login_ip FROM users ORDER BY id`)
+	rows, err := d.sql.Query(`SELECT id, uid, username, password_hash, role, must_change_password, suspended, role_template_id, disk_quota_bytes, max_sessions, created_at, last_login_at, COALESCE(last_login_ip, '') AS last_login_ip FROM users ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -78,7 +77,7 @@ func (d *DB) ListUsers() ([]User, error) {
 	for rows.Next() {
 		var u User
 		var mcp, sus int
-		if err := rows.Scan(&u.ID, &u.UID, &u.Username, &u.PasswordHash, &u.Role, &mcp, &sus, &u.RoleTemplateID, &u.CredentialPresetID, &u.DiskQuotaBytes, &u.MaxSessions, &u.CreatedAt, &u.LastLoginAt, &u.LastLoginIP); err != nil {
+		if err := rows.Scan(&u.ID, &u.UID, &u.Username, &u.PasswordHash, &u.Role, &mcp, &sus, &u.RoleTemplateID, &u.DiskQuotaBytes, &u.MaxSessions, &u.CreatedAt, &u.LastLoginAt, &u.LastLoginIP); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		u.MustChangePassword = mcp == 1
@@ -95,11 +94,6 @@ func (d *DB) SetSuspended(id int, suspended bool) error {
 
 func (d *DB) TouchLogin(id int, ts int64, ip string) error {
 	_, err := d.sql.Exec(`UPDATE users SET last_login_at = ?, last_login_ip = ? WHERE id = ?`, ts, ip, id)
-	return err
-}
-
-func (d *DB) BindCredential(userID, presetID int) error {
-	_, err := d.sql.Exec(`UPDATE users SET credential_preset_id = ? WHERE id = ?`, presetID, userID)
 	return err
 }
 
@@ -175,7 +169,7 @@ func (d *DB) EffectiveDiskQuota(userID int) (int64, error) {
 func scanUser(row *sql.Row) (User, error) {
 	var u User
 	var mcp, sus int
-	err := row.Scan(&u.ID, &u.UID, &u.Username, &u.PasswordHash, &u.Role, &mcp, &sus, &u.RoleTemplateID, &u.CredentialPresetID, &u.DiskQuotaBytes, &u.MaxSessions, &u.CreatedAt, &u.LastLoginAt, &u.LastLoginIP)
+	err := row.Scan(&u.ID, &u.UID, &u.Username, &u.PasswordHash, &u.Role, &mcp, &sus, &u.RoleTemplateID, &u.DiskQuotaBytes, &u.MaxSessions, &u.CreatedAt, &u.LastLoginAt, &u.LastLoginIP)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

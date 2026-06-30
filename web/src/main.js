@@ -111,7 +111,6 @@ function renderSidebar() {
   ];
   const admin = [
     ["users", "Users"],
-    ["credentials", "Credentials"],
     ["templates", "Templates"],
     ["captures", "Captures"],
     ["audit", "Audit"],
@@ -142,7 +141,7 @@ function themeToggle() {
   return wrap;
 }
 
-const TITLES = { terminal: "Terminal", files: "Files", traffic: "Traffic", users: "Users", credentials: "Credentials", templates: "Templates", captures: "Captures", audit: "Audit" };
+const TITLES = { terminal: "Terminal", files: "Files", traffic: "Traffic", users: "Users", templates: "Templates", captures: "Captures", audit: "Audit" };
 function nav(view) {
   current = view;
   document.getElementById("title").textContent = TITLES[view] || view;
@@ -158,7 +157,6 @@ VIEWS.terminal = viewTerminal;
 VIEWS.files = viewFiles;
 VIEWS.traffic = viewTraffic;
 VIEWS.users = viewAdminUsers;
-VIEWS.credentials = viewCredentials;
 VIEWS.templates = viewTemplates;
 VIEWS.captures = (elRoot) => mountCaptures(elRoot);
 VIEWS.audit = viewAudit;
@@ -302,47 +300,6 @@ function userModal(_existing, _onDone) {
     const r = await postJson("/api/admin/users", { username: document.getElementById("nu").value, password: document.getElementById("np").value, role: document.getElementById("nr").value });
     if (r.ok) { close(); refreshUsers(); }
     else document.getElementById("ne").textContent = "Failed (" + r.status + ")";
-  };
-}
-
-// ---------------------------------------------------------------------------
-// View: Admin — Credential presets
-// ---------------------------------------------------------------------------
-async function viewCredentials(root) {
-  root.innerHTML = `<div class="row"><span class="grow"></span><button class="btn" id="add-cred">+ New preset</button></div>
-    <div class="card" style="margin-top:12px;overflow:auto"><table class="tbl"><thead><tr><th>Name</th><th>Note</th><th></th></tr></thead><tbody id="ctbody"></tbody></table></div>`;
-  document.getElementById("add-cred").onclick = credModal;
-  await refreshCreds();
-}
-async function refreshCreds() {
-  const tb = document.getElementById("ctbody"); if (!tb) return;
-  let creds = []; try { creds = await getJson("/api/admin/credentials"); } catch {}
-  tb.innerHTML = "";
-  for (const c of creds) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td><b>${esc(c.name)}</b></td><td class="muted">${esc(c.note || "")}</td>`;
-    const act = document.createElement("td");
-    const btn = document.createElement("button"); btn.className = "btn tiny danger"; btn.textContent = "Delete";
-    btn.onclick = async () => { if (confirm("Delete preset?")) { await del(`/api/admin/credentials/${c.id}`); refreshCreds(); } };
-    act.appendChild(btn); tr.appendChild(act); tb.appendChild(tr);
-  }
-}
-function credModal() {
-  const overlay = el("div", { class: "overlay" });
-  overlay.innerHTML = `<div class="modal"><div class="hd"><b>New credential preset</b></div><div class="bd">
-    <label class="lbl">Name</label><input class="field" id="cn" placeholder="team-main"><div style="height:8px"></div>
-    <label class="lbl">Anthropic auth token</label><input class="field" id="ct" placeholder="sk-ant-..."><div style="height:8px"></div>
-    <label class="lbl">or API key</label><input class="field" id="ck" placeholder="(optional)"><div style="height:8px"></div>
-    <label class="lbl">Base URL (optional)</label><input class="field" id="cb" placeholder="https://..."><div style="height:8px"></div>
-    <label class="lbl">Note</label><input class="field" id="cno"><div style="height:14px"></div>
-    <button class="btn" id="cc">Create</button> <button class="btn ghost" id="cx">Cancel</button>
-    <p class="muted tiny" id="ce" style="margin-top:8px">Sealed with AES-256-GCM; secrets are never readable back.</p></div></div>`;
-  app.appendChild(overlay);
-  overlay.querySelector("#cx").onclick = () => overlay.remove();
-  overlay.querySelector("#cc").onclick = async () => {
-    const r = await postJson("/api/admin/credentials", { name: overlay.querySelector("#cn").value, auth_token: overlay.querySelector("#ct").value, api_key: overlay.querySelector("#ck").value, base_url: overlay.querySelector("#cb").value, note: overlay.querySelector("#cno").value });
-    if (r.ok) { overlay.remove(); refreshCreds(); }
-    else overlay.querySelector("#ce").textContent = "Failed (" + r.status + ")";
   };
 }
 

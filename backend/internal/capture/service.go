@@ -31,10 +31,9 @@ type ProxyRunner interface {
 // Start failures roll back the flag so the API can return a 500-equivalent
 // error and the session env is not rerouted.
 type Service struct {
-	runner    ProxyRunner
-	store     *Store
-	masterKey []byte
-	db        *store.DB
+	runner ProxyRunner
+	store  *Store
+	db     *store.DB
 
 	mu   sync.Mutex
 	flag map[string]bool // sessionID -> capture-on
@@ -43,17 +42,16 @@ type Service struct {
 
 // NewService returns a Service. port is the port the proxy listens on; pass 0
 // to use 8888.
-func NewService(runner ProxyRunner, st *Store, db *store.DB, masterKey []byte, port int) *Service {
+func NewService(runner ProxyRunner, st *Store, db *store.DB, port int) *Service {
 	if port == 0 {
 		port = 8888
 	}
 	return &Service{
-		runner:    runner,
-		store:     st,
-		masterKey: masterKey,
-		db:        db,
-		flag:      make(map[string]bool),
-		port:      port,
+		runner: runner,
+		store:  st,
+		db:     db,
+		flag:   make(map[string]bool),
+		port:   port,
 	}
 }
 

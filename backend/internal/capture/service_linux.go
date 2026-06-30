@@ -27,11 +27,10 @@ import (
 // Linux-runtime only: it relies on the container's network stack and a CA
 // that must be trusted by the captured client (configured in T5).
 type MITMRunner struct {
-	caRootPath string           // optional: directory of CA cert/key files
-	ca         cert.CA          // optional: in-memory CA (mutually exclusive with caRootPath)
-	store      *Store           // where captured records are appended
-	db         PackageManager   // DB seam for session/user resolution + cred decrypt
-	masterKey  []byte            // key for decrypting user credential presets
+	caRootPath string         // optional: directory of CA cert/key files
+	ca         cert.CA        // optional: in-memory CA (mutually exclusive with caRootPath)
+	store      *Store         // where captured records are appended
+	db         PackageManager // DB seam for session/user resolution
 
 	mu      sync.Mutex
 	proxy   *proxy.Proxy
@@ -43,21 +42,19 @@ type MITMRunner struct {
 // the DB types (keeping the Windows stub trivial). T5 wires the concrete
 // *store.DB here, which satisfies this interface structurally.
 type PackageManager interface {
-	// The concrete *store.DB provides GetUserByID, GetPreset, etc.
-	// The hook (implemented in T5) will resolve the producing session's user,
-	// decrypt that user's credential preset, redact, and store.Add.
+	// The concrete *store.DB provides GetUserByID, etc. The hook (implemented
+	// in T5) will resolve the producing session's user and store.Add.
 }
 
 // NewMITMRunner constructs a runner. Pass caRootPath to point go-mitmproxy at a
 // directory of CA cert/key files; pass an empty string + a non-nil ca to use
 // an in-memory CA; or both empty to let go-mitmproxy generate an ephemeral CA.
-func NewMITMRunner(caRootPath string, ca cert.CA, st *Store, db PackageManager, masterKey []byte) *MITMRunner {
+func NewMITMRunner(caRootPath string, ca cert.CA, st *Store, db PackageManager) *MITMRunner {
 	return &MITMRunner{
 		caRootPath: caRootPath,
 		ca:         ca,
 		store:      st,
 		db:         db,
-		masterKey:  masterKey,
 	}
 }
 
@@ -149,8 +146,8 @@ type captureAddon struct {
 // the req/resp pair into the store.
 //
 // TODO(T5): resolve the sessionID from the connection context, fetch the
-// owning user, decrypt that user's credential preset via masterKey, redact
-// headers + body with Redact/RedactHeaders, and r.store.Add(Record{...}).
+// owning user, redact headers + body with Redact/RedactHeaders, and
+// r.store.Add(Record{...}).
 func (a *captureAddon) Response(f *proxy.Flow) {
 	_ = f
 	// Captures are produced here in T5; lifecycle (this file) is tested via

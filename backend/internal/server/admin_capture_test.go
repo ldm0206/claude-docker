@@ -104,8 +104,8 @@ func newCaptureTestServer(t *testing.T) (*testServer, *p3FakeRunner, *capture.Se
 	mgr := sessions.NewManager(db, factory)
 
 	fr := &p3FakeRunner{}
-	cvsvc := capture.NewService(fr, capture.NewStore(), db, nil, 8888)
-	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil, nil, nil, cvsvc)
+	cvsvc := capture.NewService(fr, capture.NewStore(), db, 8888)
+	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil, nil, cvsvc)
 	return &testServer{Server: srv, createdPTYs: created}, fr, cvsvc
 }
 

@@ -122,7 +122,7 @@ func newTestServerWithQuota(t *testing.T, diskBytes int64, diskLimit int64) (
 	qsvc := quota.New(disk, cg, "/home")
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
 	mgr := newFakePTYFactoryForAdminAsManager()
-	srv := New(cfg, db, &fakeProvisioner{}, mgr, nil, qsvc, nil, nil)
+	srv := New(cfg, db, &fakeProvisioner{}, mgr, qsvc, nil, nil)
 	return srv, srv.provisioner.(*fakeProvisioner), cg, db
 }
 
