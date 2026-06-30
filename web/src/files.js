@@ -3,6 +3,54 @@ import { getJson, postJson, del, uploadFile } from "./api.js";
 // mountFiles(root): in-browser file manager over the user's workspace.
 // Layout: breadcrumbs + toolbar, a table of entries, drag-drop upload, and a
 // modal text editor. Pure vanilla JS, no framework.
+
+// Ace syntax-highlight modes, lazily loaded by file extension. Keys are lower-
+// cased extensions; values name the ace-builds mode module (minus mode-/-js).
+const EXT_TO_ACE = {
+  js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript",
+  ts: "typescript", tsx: "typescript",
+  go: "golang", py: "python", rb: "ruby", rs: "rust", java: "java",
+  c: "c_cpp", cc: "c_cpp", cpp: "c_cpp", h: "c_cpp", hpp: "c_cpp",
+  cs: "csharp", php: "php",
+  sh: "sh", bash: "sh", zsh: "sh",
+  json: "json", json5: "json5",
+  html: "html", htm: "html",
+  css: "css", scss: "scss", less: "less",
+  xml: "xml", svg: "xml",
+  md: "markdown", markdown: "markdown",
+  yaml: "yaml", yml: "yaml",
+  sql: "sql", toml: "toml",
+  ini: "ini", conf: "ini", cfg: "ini",
+  lua: "lua", dart: "dart",
+};
+const aceModeLoaders = {
+  javascript: () => import("ace-builds/src-noconflict/mode-javascript.js"),
+  typescript: () => import("ace-builds/src-noconflict/mode-typescript.js"),
+  golang: () => import("ace-builds/src-noconflict/mode-golang.js"),
+  python: () => import("ace-builds/src-noconflict/mode-python.js"),
+  ruby: () => import("ace-builds/src-noconflict/mode-ruby.js"),
+  rust: () => import("ace-builds/src-noconflict/mode-rust.js"),
+  java: () => import("ace-builds/src-noconflict/mode-java.js"),
+  c_cpp: () => import("ace-builds/src-noconflict/mode-c_cpp.js"),
+  csharp: () => import("ace-builds/src-noconflict/mode-csharp.js"),
+  php: () => import("ace-builds/src-noconflict/mode-php.js"),
+  sh: () => import("ace-builds/src-noconflict/mode-sh.js"),
+  json: () => import("ace-builds/src-noconflict/mode-json.js"),
+  json5: () => import("ace-builds/src-noconflict/mode-json5.js"),
+  html: () => import("ace-builds/src-noconflict/mode-html.js"),
+  css: () => import("ace-builds/src-noconflict/mode-css.js"),
+  scss: () => import("ace-builds/src-noconflict/mode-scss.js"),
+  less: () => import("ace-builds/src-noconflict/mode-less.js"),
+  xml: () => import("ace-builds/src-noconflict/mode-xml.js"),
+  markdown: () => import("ace-builds/src-noconflict/mode-markdown.js"),
+  yaml: () => import("ace-builds/src-noconflict/mode-yaml.js"),
+  sql: () => import("ace-builds/src-noconflict/mode-sql.js"),
+  toml: () => import("ace-builds/src-noconflict/mode-toml.js"),
+  ini: () => import("ace-builds/src-noconflict/mode-ini.js"),
+  lua: () => import("ace-builds/src-noconflict/mode-lua.js"),
+  dart: () => import("ace-builds/src-noconflict/mode-dart.js"),
+};
+
 export function mountFiles(root) {
   root.innerHTML = `
     <div class="files-toolbar">
@@ -102,21 +150,43 @@ export function mountFiles(root) {
   async function openEditor(path) {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
-    overlay.innerHTML = `<div class="modal" style="width:min(760px,94vw)"><div class="hd"><b>${esc(path)}</b></div>
-      <div class="bd"><textarea class="field" id="ed-area" style="min-height:52vh;font-family:var(--mono);font-size:13px;border-radius:6px"></textarea>
+    overlay.innerHTML = `<div class="modal" style="width:min(820px,94vw)"><div class="hd"><b>${esc(path)}</b></div>
+      <div class="bd"><div id="ed-area" style="height:58vh;width:100%;border:1px solid var(--border);border-radius:6px"></div>
       <div style="height:12px"></div><button class="btn" id="ed-save">Save</button> <button class="btn ghost" id="ed-cancel">Cancel</button>
       <span class="muted tiny" id="ed-msg" style="margin-left:8px"></span></div></div>`;
     document.getElementById("app").appendChild(overlay);
-    const area = overlay.querySelector("#ed-area");
+    const msg = () => overlay.querySelector("#ed-msg");
+    let editor = null;
+
     try {
-      const res = await fetch(`/api/files/download?path=${encodeURIComponent(path)}`);
-      area.value = await res.text();
-    } catch { overlay.querySelector("#ed-msg").textContent = "load failed"; }
+      const [res] = await Promise.all([
+        fetch(`/api/files/download?path=${encodeURIComponent(path)}`).then((r) => r.text()),
+        import("ace-builds/src-noconflict/ace"),
+      ]);
+      const ace = window.ace;
+      editor = ace.edit(overlay.querySelector("#ed-area"));
+      editor.setOptions({ fontFamily: "JetBrains Mono, ui-monospace, monospace", fontSize: "13px", printMargin: false, showPrintMargin: false });
+      editor.session.setUseWorker(false);
+      const ext = (path.split(".").pop() || "").toLowerCase();
+      const modName = EXT_TO_ACE[ext];
+      if (modName && aceModeLoaders[modName]) {
+        await aceModeLoaders[modName]();
+        editor.session.setMode(`ace/mode/${modName}`);
+      }
+      const dark = document.documentElement.getAttribute("data-theme") === "dark"
+        || (document.documentElement.getAttribute("data-theme") !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      if (dark) { await import("ace-builds/src-noconflict/theme-tomorrow_night.js"); editor.setTheme("ace/theme/tomorrow_night"); }
+      editor.setValue(res, -1);
+    } catch {
+      msg().textContent = "load failed";
+    }
+
     overlay.querySelector("#ed-cancel").onclick = () => overlay.remove();
     overlay.querySelector("#ed-save").onclick = async () => {
-      const r = await postJson("/api/files/edit", { path, content: area.value });
+      const content = editor ? editor.getValue() : "";
+      const r = await postJson("/api/files/edit", { path, content });
       if (r.ok) { overlay.remove(); refresh(); }
-      else overlay.querySelector("#ed-msg").textContent = "save failed (" + r.status + ")";
+      else msg().textContent = "save failed (" + r.status + ")";
     };
   }
 

@@ -16,9 +16,12 @@ export function mountTerminal(root) {
       <span class="muted tiny" id="term-status"></span>
     </div>`;
 
+  // No `theme` option here: an explicit theme would override the 16-color
+  // palette and the programs' own ANSI colors (ls, claude, tmux). Leaving it
+  // unset lets xterm use its default palette so program colors come through.
   const term = new Terminal({
     fontFamily: "JetBrains Mono, ui-monospace, monospace",
-    theme: { background: "#1f1e1d", foreground: "#d6cab6", cursor: "#d97757" },
+    allowProposedApi: true,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -104,6 +107,24 @@ export function mountTerminal(root) {
   }
 
   term.onData((d) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "input", data: d })));
+
+  // Clipboard paste: right-click, Ctrl+Shift+V, or Shift+Insert. readText()
+  // only resolves in a secure context (https or localhost); otherwise it
+  // rejects and we silently no-op.
+  async function pasteClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "input", data: text }));
+    } catch { /* clipboard read blocked in non-secure context */ }
+  }
+  if (term.element) term.element.addEventListener("contextmenu", (e) => { e.preventDefault(); pasteClipboard(); });
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== "keydown") return true;
+    const isPaste = (ev.ctrlKey && ev.shiftKey && (ev.key === "V" || ev.code === "KeyV")) || (ev.shiftKey && ev.key === "Insert");
+    if (isPaste) { ev.preventDefault(); pasteClipboard(); return false; }
+    return true;
+  });
+
   window.addEventListener("resize", () => fit.fit());
   term.onResize(({ cols, rows }) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "resize", cols, rows })));
 
