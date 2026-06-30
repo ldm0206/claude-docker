@@ -8,52 +8,44 @@ import (
 	"testing"
 )
 
-// TestProvisionDirs_CreatesClaudeSymlink verifies provisioning symlinks
-// /home/<user>/.claude to /data/<user>/claude-config.
-func TestProvisionDirs_CreatesClaudeSymlink(t *testing.T) {
+// TestProvisionDirs_CreatesClaudeDir verifies provisioning creates
+// /home/<user>/.claude as a real directory (0700, user-owned), NOT a symlink.
+func TestProvisionDirs_CreatesClaudeDir(t *testing.T) {
 	home := t.TempDir()
-	data := t.TempDir()
-	err := provisionDirs(home, data, "bob", 2000)
-	if err != nil {
+	if err := provisionDirs(home, "bob", 2000); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	link := filepath.Join(home, "bob", ".claude")
-	fi, err := os.Lstat(link)
+	dir := filepath.Join(home, "bob", ".claude")
+	fi, err := os.Lstat(dir)
 	if err != nil {
 		t.Fatalf(".claude not created: %v", err)
 	}
-	if fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatal(".claude is not a symlink")
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal(".claude is a symlink, want a real directory")
 	}
-	target, err := os.Readlink(link)
-	if err != nil {
-		t.Fatalf("readlink: %v", err)
+	if !fi.IsDir() {
+		t.Fatalf(".claude mode = %v, want a directory", fi.Mode())
 	}
-	want := filepath.Join(data, "bob", "claude-config")
-	if target != want {
-		t.Errorf("symlink target = %q, want %q", target, want)
+	if fi.Mode().Perm() != 0o700 {
+		t.Errorf(".claude perm = %o, want 0700", fi.Mode().Perm())
 	}
 }
 
-// TestProvisionDirs_SkipsExistingClaude verifies provisioning does NOT clobber
-// an existing real .claude directory.
-func TestProvisionDirs_SkipsExistingClaude(t *testing.T) {
+// TestProvisionDirs_PreservesExistingClaude verifies provisioning does NOT
+// clobber an existing real .claude directory (idempotent MkdirAll).
+func TestProvisionDirs_PreservesExistingClaude(t *testing.T) {
 	home := t.TempDir()
-	data := t.TempDir()
-	// Pre-create a real .claude dir with a file inside.
 	realClaude := filepath.Join(home, "bob", ".claude")
-	if err := os.MkdirAll(realClaude, 0o755); err != nil {
+	if err := os.MkdirAll(realClaude, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(realClaude, "keep.txt"), []byte("data"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(realClaude, "keep.txt"), []byte("data"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := provisionDirs(home, data, "bob", 2000); err != nil {
+	if err := provisionDirs(home, "bob", 2000); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	// The real dir must still be a dir (not replaced by a symlink), and the
-	// file must survive.
 	fi, err := os.Lstat(realClaude)
 	if err != nil {
 		t.Fatal(err)

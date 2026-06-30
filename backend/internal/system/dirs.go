@@ -26,7 +26,7 @@ func validateUsername(name string) error {
 	return nil
 }
 
-func provisionDirs(homeRoot, dataRoot, username string, uid int) error {
+func provisionDirs(homeRoot, username string, uid int) error {
 	home := filepath.Join(homeRoot, username)
 	if err := os.MkdirAll(filepath.Join(home, "workspace"), 0o700); err != nil {
 		return fmt.Errorf("mkdir workspace: %w", err)
@@ -41,26 +41,21 @@ func provisionDirs(homeRoot, dataRoot, username string, uid int) error {
 	if err := os.Chown(filepath.Join(home, "workspace"), uid, uid); err != nil {
 		return err
 	}
-	cfg := filepath.Join(dataRoot, username, "claude-config")
-	if err := os.MkdirAll(cfg, 0o700); err != nil {
-		return fmt.Errorf("mkdir claude-config: %w", err)
+	// claude code's config lives directly under the user's home (persistent
+	// claude-home volume), NOT under /data. ~/.claude is a real directory so
+	// claude owns settings.json / .credentials.json with no symlink indirection
+	// (the old /data/<user>/claude-config + symlink scheme caused EACCES on
+	// settings.json when the dir or file wasn't owned by the user).
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		return fmt.Errorf("mkdir .claude: %w", err)
 	}
-	// Symlink ~/.claude → /data/<user>/claude-config so `claude login` (which
-	// reads ~/.claude by default) persists per-user on the /data volume,
-	// decoupled from the workspace. If ~/.claude already exists as a real
-	// file/dir, leave it untouched (never clobber user state).
-	claudeLink := filepath.Join(home, ".claude")
-	if _, err := os.Lstat(claudeLink); os.IsNotExist(err) {
-		if err := os.Symlink(cfg, claudeLink); err != nil {
-			return fmt.Errorf("symlink .claude: %w", err)
-		}
-	}
-	return os.Chown(cfg, uid, uid)
+	return os.Chown(claudeDir, uid, uid)
 }
 
 func ProvisionUserDirs(username string, uid int) error {
 	if err := validateUsername(username); err != nil {
 		return err
 	}
-	return provisionDirs(HomeRoot, DataRoot, username, uid)
+	return provisionDirs(HomeRoot, username, uid)
 }
