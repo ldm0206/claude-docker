@@ -83,6 +83,31 @@ func (d *DB) TouchSession(id string, ts int64) error {
 	return err
 }
 
+// ListAliveSessions returns every session row currently marked alive=1, across
+// all users. Used by the idle/maxage reaper to find sessions whose PTY should be
+// stopped after inactivity or after exceeding a max lifetime.
+func (d *DB) ListAliveSessions() ([]Session, error) {
+	rows, err := d.sql.Query(
+		`SELECT id, user_id, name, started_at, last_seen_at, alive, COALESCE(client_ip, '') AS client_ip FROM sessions
+		 WHERE alive = 1 ORDER BY started_at ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list alive sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		var s Session
+		var alive int
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.StartedAt, &s.LastSeenAt, &alive, &s.ClientIP); err != nil {
+			return nil, fmt.Errorf("scan alive session: %w", err)
+		}
+		s.Alive = alive == 1
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // MarkSessionExited sets alive=0. The row is retained for history; the live
 // PTY is stopped separately by sessions.Manager.Kill.
 func (d *DB) MarkSessionExited(id string) error {

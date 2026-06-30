@@ -8,11 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/ldm0206/claude-docker/backend/internal/auth"
-	"github.com/ldm0206/claude-docker/backend/internal/capture"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
 	"github.com/ldm0206/claude-docker/backend/internal/quota"
@@ -82,27 +80,32 @@ func main() {
 		log.Printf("[server] warning: nft not found — traffic accounting in no-op mode (%v)", err)
 	}
 
-	// --- Capture: admin-only, per-session MITM (Linux runtime). The real
-	// MITMRunner is built from the CA the entrypoint generates + installs into
-	// the trust store; the proxy starts LAZILY on the first admin enable
-	// (capture.Enable), not at boot. The Response hook (session resolution +
-	// redaction + store.Add) is Linux-runtime; see capture/service_linux.go.
-	// -- platform-aware runner construction via build-tagged NewMITMRunner --
-	capPort := 8888
-	if v, err := strconv.Atoi(os.Getenv("CLAUDE_DEBUG_PROXY_PORT")); err == nil && v > 0 {
-		capPort = v
-	}
-	caRoot := os.Getenv("CLAUDE_DEBUG_SSL_CA_DIR")
-	capStore := capture.NewStore()
-	capRunner := capture.NewMITMRunner(caRoot, nil, capStore, db)
-	capSvc := capture.NewService(capRunner, capStore, db, capPort)
-
-	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, qsvc, tsvc, capSvc)
+	srv := ser.New(cfg, db, system.DefaultProvisioner, sess, qsvc, tsvc)
 
 	// Background loops.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go tsvc.Start(ctx, 5*time.Second)
+	// Session reaper: stop PTYs whose WS went idle (user closed the browser
+	// without exiting claude) or that have run past the max lifetime. Without
+	// this, idle sessions leak — they keep counting toward the per-user cap and
+	// their PTY process never exits. idle=30min, maxAge=24h.
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := sess.ReapIdle(30*time.Minute, 24*time.Hour); err != nil {
+					log.Printf("[server] session reap: %v", err)
+				} else if n > 0 {
+					log.Printf("[server] reaped %d idle/expired session(s)", n)
+				}
+			}
+		}
+	}()
 
 	log.Printf("[server] listening on :%d", cfg.Port)
 	if err := httpListenAndServe(cfg.Port, srv.Routes()); err != nil {

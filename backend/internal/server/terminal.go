@@ -122,6 +122,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case "input":
 			_ = p.Write([]byte(msg.Data))
+			_ = s.db.TouchSession(effSID, time.Now().Unix())
 		case "resize":
 			_ = p.Resize(msg.Cols, msg.Rows)
 		}
@@ -140,38 +141,6 @@ func originPatterns(r *http.Request) []string {
 		strippedHost = host
 	}
 	return []string{strippedHost}
-}
-
-// handleCapturesWS pushes captured (redacted) request/response records to the
-// admin Captures panel over a WebSocket. Admin-only (authWSUser rejects
-// suspended/deleted, 401). On connect it sends the current list (optionally
-// filtered by ?session=<id>), then pushes each new record as it lands. The
-// push wiring lives in Server.captureFanout (testable without a real WS);
-// this handler just bridges it to the websocket connection.
-func (s *Server) handleCapturesWS(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.authWSUser(r)
-	if !ok || u.Role != "admin" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: originPatterns(r)})
-	if err != nil {
-		return
-	}
-	defer c.Close(websocket.StatusNormalClosure, "")
-	ctx := r.Context()
-	session := r.URL.Query().Get("session")
-	write := func(b []byte) bool {
-		return c.Write(ctx, websocket.MessageText, b) == nil
-	}
-	// done is closed when the client disconnects (Read returns).
-	done := make(chan struct{})
-	go func() { defer close(done); s.captureFanout(write, done, session) }()
-	for {
-		if _, _, err := c.Read(ctx); err != nil {
-			return
-		}
-	}
 }
 
 // Compile-time guarantee that Server uses sessions.PTY (catches an interface

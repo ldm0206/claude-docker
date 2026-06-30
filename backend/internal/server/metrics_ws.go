@@ -38,10 +38,9 @@ func (s *Server) handleMetricsWS(w http.ResponseWriter, r *http.Request) {
 			mem["max"] = nil // unset → null (matches Node's JSON.stringify(Infinity))
 		}
 		snap := map[string]any{
-			"cpu":       map[string]any{"usageUsec": usageUsec},
-			"mem":       mem,
-			"net":       map[string]any{"rxBytes": rx, "txBytes": tx},
-			"captureOn": false,
+			"cpu": map[string]any{"usageUsec": usageUsec},
+			"mem": mem,
+			"net": map[string]any{"rxBytes": rx, "txBytes": tx},
 			// "alive" referred to the shared PTY (Plan 2); it is gone in Plan 3.
 			// Per-session liveness is exposed via /api/sessions (T6).
 			"ts": time.Now().UnixMilli(),

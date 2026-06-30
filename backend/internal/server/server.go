@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ldm0206/claude-docker/backend/internal/capture"
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 	"github.com/ldm0206/claude-docker/backend/internal/pty"
 	"github.com/ldm0206/claude-docker/backend/internal/quota"
@@ -41,23 +40,14 @@ type Server struct {
 	// graceful path.
 	quota   *quota.Service
 	traffic *traffic.Service
-
-	// capture (Plan 5) drives the lazy MITM proxy lifecycle + a per-session
-	// capture flag. The session env factory consults capture.IsEnabled(sessionID)
-	// to route the PTY's HTTP through the proxy when on; the admin capture API
-	// calls capture.Enable/Disable + sess.Restart so the PTY re-spawns with the
-	// updated env. May be nil — every call site degrades gracefully (no routing,
-	// admin endpoints 503); T5 wires the real *capture.Service.
-	capture *capture.Service
 }
 
 // New wires a Server to the given config, user store, provisioner, session
-// manager, and the optional quota / traffic / capture services. The db and sess
+// manager, and the optional quota / traffic services. The db and sess
 // remain owned by the caller (main.go opens/closes them); New only retains
-// them. quota, traffic, and capture may be nil — every call site degrades
-// gracefully (zeros / no-op / no routing); T7 passes the real quota+traffic,
-// T5 the real capture.
-func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, q *quota.Service, tf *traffic.Service, cap *capture.Service) *Server {
+// them. quota and traffic may be nil — every call site degrades gracefully
+// (zeros / no-op); T7 passes the real quota+traffic.
+func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner, sess *sessions.Manager, q *quota.Service, tf *traffic.Service) *Server {
 	if sess == nil {
 		panic("server: New sess must not be nil")
 	}
@@ -68,7 +58,6 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 		sess:        sess,
 		quota:       q,
 		traffic:     tf,
-		capture:     cap,
 	}
 }
 
@@ -79,65 +68,15 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 // re-login take effect on the next Create/Restart without restarting the
 // server.
 //
-// P5-T3 — env routing: the factory ALSO consults the per-session capture flag
-// (capture.IsEnabled(sessionID)) and, when on, rewrites the returned env so
-// the PTY's HTTP traffic goes through the MITM proxy:
-//   - sets HTTP_PROXY / HTTPS_PROXY (+lower) = capture.ProxyURL();
-//   - REMOVES ALL_PROXY / all_proxy so claude doesn't bypass the proxy via SOCKS.
-//
 // SECURITY: the template credential file is copied onto disk under the user's
 // own ~/.claude (0600, user-owned). It is never logged.
 func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
-	return func(_ string, sessionID string) []string {
+	return func(_ string, _ string) []string {
 		if err := system.CopyTemplateCredentials(s.resolveTemplateUser(), u.Username, u.UID); err != nil {
 			log.Printf("[server] warning: copy template credentials for %s: %v", u.Username, err)
 		}
-		env := pty.BuildUserEnv(s.cfg, u.Username, "/home/"+u.Username+"/.claude")
-		return s.applyCaptureRouting(env, sessionID)
+		return pty.BuildUserEnv(s.cfg, u.Username, "/home/"+u.Username+"/.claude")
 	}
-}
-
-// applyCaptureRouting rewrites the env slice for per-session MITM capture. When
-// capture is on for sessionID, it:
-//   - drops ALL_PROXY / all_proxy (so claude can't bypass via SOCKS);
-//   - sets HTTP_PROXY / HTTPS_PROXY / http_proxy / https_proxy = the proxy URL
-//     (overriding any inherited or cfg value).
-//
-// When capture is off (or s.capture is nil — the not-yet-wired state), env is
-// returned unchanged. The env slice is rebuilt filtered (the dropped keys are
-// genuinely removed, not blanked) so the spawned process never sees them.
-func (s *Server) applyCaptureRouting(env []string, sessionID string) []string {
-	if s.capture == nil || !s.capture.IsEnabled(sessionID) {
-		return env
-	}
-	proxyURL := s.capture.ProxyURL()
-	drop := map[string]struct{}{
-		"ALL_PROXY": {},
-		"all_proxy": {},
-	}
-	// First pass: drop ALL_PROXY/all_proxy entries; keep everything else.
-	filtered := make([]string, 0, len(env))
-	for _, e := range env {
-		key, _, ok := strings.Cut(e, "=")
-		if !ok {
-			filtered = append(filtered, e)
-			continue
-		}
-		if _, dropIt := drop[key]; dropIt {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-	// Second pass: override the 4 proxy keys (set last so they win). BuildUserEnv
-	// already sorted the slice; we append the overrides unsorted — exec.Cmd.Env
-	// does not require sorted keys, and last-wins for duplicates is what we want.
-	filtered = append(filtered,
-		"HTTP_PROXY="+proxyURL,
-		"HTTPS_PROXY="+proxyURL,
-		"http_proxy="+proxyURL,
-		"https_proxy="+proxyURL,
-	)
-	return filtered
 }
 
 // ensureSession is the core of /ws/terminal: given a live user and an optional
@@ -249,7 +188,6 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/auth/logout", s.handleLogout)
 	// /ws/* routes check the cookie inside the handler before upgrading.
 	r.Get("/ws/terminal", s.handleTerminalWS)
-	r.Get("/ws/captures", s.handleCapturesWS)
 	r.Get("/ws/metrics", s.handleMetricsWS)
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -291,19 +229,6 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
 			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
-			// Admin per-session capture toggle (P5-T3). Enable lazily starts the
-			// MITM proxy + restarts the session PTY so its env routes through it.
-			r.Post("/api/admin/sessions/{id}/capture/enable", s.handleAdminCaptureEnable)
-			r.Post("/api/admin/sessions/{id}/capture/disable", s.handleAdminCaptureDisable)
-			// Admin captures read/clear surface (P5-T4). The /ws/captures push
-			// is mounted top-level (WS handlers auth inline, see handleCapturesWS).
-			r.Get("/api/admin/captures", s.handleAdminListCaptures)
-			r.Post("/api/admin/captures/clear", s.handleAdminClearCaptures)
-			// Admin role-template CRUD (T7)
-			r.Get("/api/admin/templates", s.handleAdminListTemplates)
-			r.Post("/api/admin/templates", s.handleAdminCreateTemplate)
-			r.Patch("/api/admin/templates/{id}", s.handleAdminUpdateTemplate)
-			r.Delete("/api/admin/templates/{id}", s.handleAdminDeleteTemplate)
 			r.Get("/api/admin/settings/template-user", s.handleAdminGetTemplateUser)
 			r.Put("/api/admin/settings/template-user", s.handleAdminSetTemplateUser)
 		})
@@ -344,10 +269,9 @@ func (s *Server) clientIP(r *http.Request) string {
 
 // handleState returns the minimal client-facing state. Plan 3 dropped
 // `sessionAlive` (it referred to the now-removed shared PTY); per-user session
-// liveness is exposed via /api/sessions. captureOn reflects whether the admin
-// has enabled capture on the requesting user's session (if any), else false.
+// liveness is exposed via /api/sessions.
 func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"captureOn": false})
+	writeJSON(w, 200, map[string]any{})
 }
 
 // authMiddleware guards the authed route group. It verifies the session cookie,

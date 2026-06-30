@@ -97,11 +97,6 @@ func (d *DB) TouchLogin(id int, ts int64, ip string) error {
 	return err
 }
 
-func (d *DB) BindTemplate(userID, templateID int) error {
-	_, err := d.sql.Exec(`UPDATE users SET role_template_id = ? WHERE id = ?`, templateID, userID)
-	return err
-}
-
 func (d *DB) SetUserMaxSessions(userID int, max int) error {
 	_, err := d.sql.Exec(`UPDATE users SET max_sessions = ? WHERE id = ?`, max, userID)
 	return err
@@ -124,19 +119,9 @@ func (d *DB) EffectiveMaxSessions(userID int) (int, error) {
 	if maxSessions.Valid {
 		return int(maxSessions.Int64), nil
 	}
-	// No user override — check bound template
-	var tmplMax sql.NullInt64
-	err = d.sql.QueryRow(
-		`SELECT rt.max_sessions FROM users u
-		 JOIN role_templates rt ON rt.id = u.role_template_id
-		 WHERE u.id = ?`, userID,
-	).Scan(&tmplMax)
-	if err == nil && tmplMax.Valid {
-		return int(tmplMax.Int64), nil
-	}
 	// Default: 1 — single-session-per-user model. The frontend attaches the
-	// one alive session (or creates one); admins can still raise this per-user
-	// / per-template, but the out-of-the-box experience is one session.
+	// one alive session (or creates one); admins can raise this per-user, but
+	// the out-of-the-box experience is one session.
 	return 1, nil
 }
 
@@ -151,16 +136,6 @@ func (d *DB) EffectiveDiskQuota(userID int) (int64, error) {
 	}
 	if diskQuota.Valid {
 		return diskQuota.Int64, nil
-	}
-	// No user override — check bound template
-	var tmplQuota sql.NullInt64
-	err = d.sql.QueryRow(
-		`SELECT rt.disk_quota_bytes FROM users u
-		 JOIN role_templates rt ON rt.id = u.role_template_id
-		 WHERE u.id = ?`, userID,
-	).Scan(&tmplQuota)
-	if err == nil && tmplQuota.Valid {
-		return tmplQuota.Int64, nil
 	}
 	// Default
 	return 0, nil

@@ -1,6 +1,5 @@
 import { getJson, postJson, patchJson, del } from "./api.js";
 import { mountTerminal } from "./terminal.js";
-import { mountCaptures } from "./captures.js";
 
 const app = document.getElementById("app");
 
@@ -111,8 +110,6 @@ function renderSidebar() {
   ];
   const admin = [
     ["users", "Users"],
-    ["templates", "Templates"],
-    ["captures", "Captures"],
     ["audit", "Audit"],
   ];
   sb.innerHTML = "";
@@ -141,7 +138,7 @@ function themeToggle() {
   return wrap;
 }
 
-const TITLES = { terminal: "Terminal", files: "Files", traffic: "Traffic", users: "Users", templates: "Templates", captures: "Captures", audit: "Audit" };
+const TITLES = { terminal: "Terminal", files: "Files", traffic: "Traffic", users: "Users", audit: "Audit" };
 function nav(view) {
   current = view;
   document.getElementById("title").textContent = TITLES[view] || view;
@@ -157,8 +154,6 @@ VIEWS.terminal = viewTerminal;
 VIEWS.files = viewFiles;
 VIEWS.traffic = viewTraffic;
 VIEWS.users = viewAdminUsers;
-VIEWS.templates = viewTemplates;
-VIEWS.captures = (elRoot) => mountCaptures(elRoot);
 VIEWS.audit = viewAudit;
 
 // ---------------------------------------------------------------------------
@@ -300,58 +295,6 @@ function userModal(_existing, _onDone) {
     const r = await postJson("/api/admin/users", { username: document.getElementById("nu").value, password: document.getElementById("np").value, role: document.getElementById("nr").value });
     if (r.ok) { close(); refreshUsers(); }
     else document.getElementById("ne").textContent = "Failed (" + r.status + ")";
-  };
-}
-
-// ---------------------------------------------------------------------------
-// View: Admin — Role / quota templates
-// ---------------------------------------------------------------------------
-async function viewTemplates(root) {
-  root.innerHTML = `<div class="row"><span class="grow"></span><button class="btn" id="add-tpl">+ New template</button></div>
-    <div class="card" style="margin-top:12px;overflow:auto"><table class="tbl"><thead><tr><th>Name</th><th>Disk</th><th>Max sessions</th><th>CPU</th><th>Mem</th><th></th></tr></thead><tbody id="ttbody"></tbody></table></div>`;
-  document.getElementById("add-tpl").onclick = tplModal;
-  await refreshTpls();
-}
-async function refreshTpls() {
-  const tb = document.getElementById("ttbody"); if (!tb) return;
-  let tpls = []; try { tpls = await getJson("/api/admin/templates"); } catch {}
-  tb.innerHTML = "";
-  for (const t of tpls) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td><b>${esc(t.name)}</b></td><td class="muted">${fmtBytes(t.disk_quota_bytes)}</td><td class="muted">${t.max_sessions}</td><td class="muted">${esc(t.cpu_quota||"—")}</td><td class="muted">${fmtBytes(t.memory_max_bytes)}</td>`;
-    const act = document.createElement("td");
-    const btn = document.createElement("button"); btn.className = "btn tiny danger"; btn.textContent = "Delete";
-    btn.onclick = async () => { await del(`/api/admin/templates/${t.id}`); refreshTpls(); };
-    act.appendChild(btn); tr.appendChild(act); tb.appendChild(tr);
-  }
-}
-function tplModal() {
-  const overlay = el("div", { class: "overlay" });
-  overlay.innerHTML = `<div class="modal"><div class="hd"><b>New role template</b></div><div class="bd">
-    <label class="lbl">Name</label><input class="field" id="tn" placeholder="standard"><div style="height:8px"></div>
-    <div class="grid2"><div><label class="lbl">Disk quota (GB)</label><input class="field" id="td" type="number" value="10"></div>
-    <div><label class="lbl">Max sessions</label><input class="field" id="ts" type="number" value="3"></div></div>
-    <div class="grid2"><div><label class="lbl">CPU quota (cgroup)</label><input class="field" id="tc" value="max"></div>
-    <div><label class="lbl">Memory max (MB)</label><input class="field" id="tm" type="number" value="1024"></div></div>
-    <div style="height:14px"></div><button class="btn" id="tgo">Create</button> <button class="btn ghost" id="tx">Cancel</button>
-    <p class="muted tiny" id="te" style="margin-top:8px"></p></div></div>`;
-  app.appendChild(overlay);
-  overlay.querySelector("#tx").onclick = () => overlay.remove();
-  overlay.querySelector("#tgo").onclick = async () => {
-    const gb = parseInt(overlay.querySelector("#td").value) || 10;
-    const r = await postJson("/api/admin/templates", {
-      name: overlay.querySelector("#tn").value,
-      disk_quota_bytes: gb * 1024 * 1024 * 1024,
-      max_sessions: parseInt(overlay.querySelector("#ts").value) || 3,
-      cpu_quota: overlay.querySelector("#tc").value || "max",
-      memory_max_bytes: (parseInt(overlay.querySelector("#tm").value) || 1024) * 1024 * 1024,
-    });
-    if (r.ok) { overlay.remove(); refreshTpls(); }
-    else {
-      let msg = `Failed (${r.status})`;
-      try { const j = await r.json(); if (j.error) msg = j.error; } catch {}
-      overlay.querySelector("#te").textContent = msg;
-    }
   };
 }
 

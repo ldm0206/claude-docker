@@ -95,7 +95,7 @@ func newTestServerWithAdmin(t *testing.T) (*Server, *fakeProvisioner, *store.DB)
 	// tests never create real sessions, so the factory is never invoked; it
 	// just has to be non-nil so server.New doesn't panic.
 	mgr := sessions.NewManager(db, newFakePTYFactoryForAdmin())
-	srv := New(cfg, db, fake, mgr, nil, nil, nil)
+	srv := New(cfg, db, fake, mgr, nil, nil)
 	return srv, fake, db
 }
 
@@ -451,57 +451,8 @@ func TestAdminCreateUser_MissingFields(t *testing.T) {
 // Verify the system.AccountProvisioner interface is satisfied.
 var _ system.AccountProvisioner = (*fakeProvisioner)(nil)
 
-// ---------------------------------------------------------------------------
-// T7: create-user now accepts an optional role_template_id
-// ---------------------------------------------------------------------------
-
-// TestAdminCreateUser_BindsTemplate verifies that when the create-user body
-// carries role_template_id, the admin handler binds it after CreateUser, and
-// EffectiveMaxSessions reflects the template.
-func TestAdminCreateUser_BindsTemplate(t *testing.T) {
-	s, _, db := newTestServerWithAdmin(t)
-	cookie := adminCookie(t, s)
-
-	// Seed a template (max_sessions=7) directly in the DB.
-	tmpl, err := db.CreateTemplate(store.RoleTemplate{
-		Name: "power", DiskQuotaBytes: 0, CPUQuota: "1.0", MemoryMaxBytes: 0, MaxSessions: 7, Permissions: "{}",
-	})
-	if err != nil {
-		t.Fatalf("create template: %v", err)
-	}
-
-	body := fmt.Sprintf(
-		`{"username":"frank","password":"pw","role":"user","role_template_id":%d}`,
-		tmpl.ID,
-	)
-	req := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: "session", Value: cookie})
-	w := httptest.NewRecorder()
-	s.Routes().ServeHTTP(w, req)
-	if w.Code != 201 {
-		t.Fatalf("create user: expected 201, got %d; body=%s", w.Code, w.Body.String())
-	}
-
-	u, err := db.GetUserByUsername("frank")
-	if err != nil {
-		t.Fatalf("get frank: %v", err)
-	}
-	if !u.RoleTemplateID.Valid || int(u.RoleTemplateID.Int64) != tmpl.ID {
-		t.Fatalf("role_template_id not bound: %+v", u.RoleTemplateID)
-	}
-	// EffectiveMaxSessions should resolve via the bound template (7).
-	eff, err := db.EffectiveMaxSessions(u.ID)
-	if err != nil {
-		t.Fatalf("effective max sessions: %v", err)
-	}
-	if eff != 7 {
-		t.Fatalf("expected effective max sessions 7, got %d", eff)
-	}
-}
-
-// TestAdminCreateUser_NoBindWhenIDsAbsent confirms the existing behavior is
-// preserved when the optional field is omitted entirely.
+// TestAdminCreateUser_NoBindWhenIDsAbsent confirms a plain create-user body
+// (no optional fields) still creates the user and leaves role_template_id NULL.
 func TestAdminCreateUser_NoBindWhenIDsAbsent(t *testing.T) {
 	s, _, db := newTestServerWithAdmin(t)
 	cookie := adminCookie(t, s)
@@ -516,6 +467,6 @@ func TestAdminCreateUser_NoBindWhenIDsAbsent(t *testing.T) {
 	}
 	u, _ := db.GetUserByUsername("heidi")
 	if u.RoleTemplateID.Valid {
-		t.Fatalf("template unexpectedly bound: %+v", u.RoleTemplateID)
+		t.Fatalf("role_template_id unexpectedly set: %+v", u.RoleTemplateID)
 	}
 }

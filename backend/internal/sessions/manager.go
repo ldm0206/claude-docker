@@ -260,6 +260,54 @@ func (m *Manager) List(userID int) ([]store.Session, error) {
 	return m.db.ListSessionsForUser(userID)
 }
 
+// ReapIdle stops and reaps sessions that are either idle (no WS input for
+// longer than maxIdle) or have exceeded maxAge since started_at. Both bounds
+// are best-effort: a session whose PTY is still live is Killed (Stop +
+// alive=0); a session whose live map entry was already lost (process gone but
+// row still alive=1) is cleaned via MarkSessionExited. Returns the count of
+// sessions reaped. Either bound <= 0 disables that check. Called periodically
+// by the server's reaper goroutine (see main.go).
+//
+// This is the mechanism that reclaims sessions whose user closed the browser
+// without exiting claude — without it the PTY leaks (keeps counting toward the
+// cap) and the row stays alive=1 forever.
+func (m *Manager) ReapIdle(maxIdle, maxAge time.Duration) (int, error) {
+	if maxIdle <= 0 && maxAge <= 0 {
+		return 0, nil
+	}
+	alive, err := m.db.ListAliveSessions()
+	if err != nil {
+		return 0, fmt.Errorf("list alive for reap: %w", err)
+	}
+	now := time.Now()
+	reaped := 0
+	for _, s := range alive {
+		idle := now.Unix() - s.LastSeenAt
+		age := now.Unix() - s.StartedAt
+		stale := (maxIdle > 0 && idle > int64(maxIdle.Seconds())) ||
+			(maxAge > 0 && age > int64(maxAge.Seconds()))
+		if !stale {
+			continue
+		}
+		// Resolve username for Kill. If the user was deleted the row is orphaned;
+		// flip it to exited and move on.
+		u, err := m.db.GetUserByID(s.UserID)
+		if err != nil {
+			_ = m.db.MarkSessionExited(s.ID)
+			reaped++
+			continue
+		}
+		// Kill handles both live (Stop + map delete + MarkSessionExited) and
+		// already-gone (returns ErrNotFound, row may still be alive=1) cases. On
+		// ErrNotFound the row is still alive=1 — flip it.
+		if err := m.Kill(u.Username, s.ID); err != nil {
+			_ = m.db.MarkSessionExited(s.ID)
+		}
+		reaped++
+	}
+	return reaped, nil
+}
+
 // Kill stops the live PTY, marks the DB row exited (alive=0), and removes the
 // entry from the live map. Safe to call multiple times — the second call
 // returns ErrNotFound (the map entry is gone).

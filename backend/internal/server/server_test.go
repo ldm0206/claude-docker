@@ -135,7 +135,7 @@ func newTestServer(t *testing.T) *testServer {
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
 	factory, created := newFakePTYFactory()
 	mgr := sessions.NewManager(db, factory)
-	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil, nil, nil)
+	srv := New(cfg, db, system.DefaultProvisioner, mgr, nil, nil)
 	return &testServer{Server: srv, createdPTYs: created}
 }
 
@@ -274,9 +274,8 @@ func TestStateRequiresAuth(t *testing.T) {
 	}
 }
 
-// TestStateDropsSessionAlive verifies /api/state returns {captureOn:false} and
-// NO sessionAlive key (the shared PTY is gone; per-user liveness is via
-// /api/sessions in T6).
+// TestStateDropsSessionAlive verifies /api/state returns 200 and NO sessionAlive
+// key (the shared PTY is gone; per-user liveness is via /api/sessions in T6).
 func TestStateDropsSessionAlive(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/state", nil)
@@ -287,9 +286,6 @@ func TestStateDropsSessionAlive(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"captureOn":false`) {
-		t.Fatalf("body missing captureOn:false: %s", body)
-	}
 	if strings.Contains(body, "sessionAlive") {
 		t.Fatalf("body must NOT contain sessionAlive: %s", body)
 	}

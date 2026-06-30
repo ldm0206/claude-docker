@@ -11,7 +11,10 @@ import "@xterm/xterm/css/xterm.css";
 // session exists at a time.
 export function mountTerminal(root) {
   root.innerHTML = `
-    <div class="term-wrap"><div class="term-body" id="termroot"></div></div>
+    <div class="term-wrap">
+      <div class="term-hint muted tiny">登录 claude 前先执行：<code>unset ALL_PROXY all_proxy HTTP_PROXY HTTPS_PROXY http_proxy https_proxy</code>（否则会报 protocol mismatch）</div>
+      <div class="term-body" id="termroot"></div>
+    </div>
     <div class="row" style="margin-top:8px">
       <button class="btn danger tiny" id="kill-sess">Restart terminal</button>
       <span class="muted tiny" id="term-status"></span>

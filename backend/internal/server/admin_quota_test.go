@@ -93,22 +93,16 @@ func newTestServerWithQuota(t *testing.T, diskBytes int64, diskLimit int64) (
 	if err != nil {
 		t.Fatalf("hash: %v", err)
 	}
-	// alice — regular user with a role template carrying the disk limit, so
+	// alice — regular user with a per-user disk limit, so
 	// db.EffectiveDiskQuota(alice.ID) returns diskLimit.
-	tmpl, err := db.CreateTemplate(store.RoleTemplate{
-		Name: "t", DiskQuotaBytes: diskLimit, CPUQuota: "1.0", MaxSessions: 3, Permissions: "{}",
-	})
-	if err != nil {
-		t.Fatalf("create template: %v", err)
-	}
 	alice, err := db.CreateUser(store.User{
 		UID: 2000, Username: "alice", PasswordHash: h, Role: "user", CreatedAt: 1,
 	})
 	if err != nil {
 		t.Fatalf("create alice: %v", err)
 	}
-	if err := db.BindTemplate(alice.ID, tmpl.ID); err != nil {
-		t.Fatalf("bind template: %v", err)
+	if err := db.SetUserDiskQuota(alice.ID, diskLimit); err != nil {
+		t.Fatalf("set disk quota: %v", err)
 	}
 	// bob — admin
 	if _, err := db.CreateUser(store.User{
@@ -122,7 +116,7 @@ func newTestServerWithQuota(t *testing.T, diskBytes int64, diskLimit int64) (
 	qsvc := quota.New(disk, cg, "/home")
 	cfg := &config.Config{SessionSecret: "s", Port: 0}
 	mgr := newFakePTYFactoryForAdminAsManager()
-	srv := New(cfg, db, &fakeProvisioner{}, mgr, qsvc, nil, nil)
+	srv := New(cfg, db, &fakeProvisioner{}, mgr, qsvc, nil)
 	return srv, srv.provisioner.(*fakeProvisioner), cg, db
 }
 

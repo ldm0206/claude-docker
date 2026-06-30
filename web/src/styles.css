@@ -117,6 +117,8 @@ table.tbl tr:hover td { background: var(--surface-2); }
 .modal .bd { padding:16px; }
 
 .term-wrap { display:flex; flex-direction:column; height:calc(100vh - 110px); }
+.term-hint { padding:6px 10px; background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm); margin-bottom:6px; line-height:1.5; }
+.term-hint code { background:var(--surface); padding:1px 5px; border-radius:3px; font-family:var(--mono); font-size:11px; }
 .term-body { background: var(--term-bg); border:1px solid var(--border); border-radius:var(--radius-sm); flex:1; padding:4px; overflow:hidden; }
 
 .menu-btn { display:none; background:transparent; border:1px solid var(--border); border-radius:var(--radius-sm); padding:5px 10px; cursor:pointer; color:var(--text); }
