@@ -1,6 +1,7 @@
 import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { ClipboardAddon } from "@xterm/addon-clipboard";
 import "xterm/css/xterm.css";
 
 // mountTerminal(root): single-session terminal. On open it attaches the user's
@@ -26,6 +27,11 @@ export function mountTerminal(root) {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon());
+  // OSC 52 both ways: claude code's "(c to copy)" (write), tmux copy-mode, and
+  // `echo x|pbcopy` (write) + `pbpaste`/tmux paste (read → content is fed back
+  // into the PTY). xterm.js core has no OSC 52 support; this addon registers
+  // the handler via term.parser.registerOscHandler(52, ...).
+  term.loadAddon(new ClipboardAddon());
   term.open(document.getElementById("termroot"));
   fit.fit();
 
@@ -108,36 +114,8 @@ export function mountTerminal(root) {
 
   term.onData((d) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "input", data: d })));
 
-  // --- Clipboard bridge ---
-  // xterm.js 5.x does NOT handle OSC 52 internally; we register it via the
-  // parser. Programs (claude code's "(c to copy)", tmux copy-mode, `echo x |
-  // pbcopy` via the entrypoint shim) emit ESC ] 52 ; c ; <base64> BEL to WRITE
-  // the clipboard. We decode and forward to the browser clipboard. Reads
-  // (payload "?") are gated behind a user gesture by browsers, so we only wire
-  // the write direction here — pbpaste stays best-effort server-side.
-  function copyToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
-    } else { fallbackCopy(text); }
-  }
-  function fallbackCopy(text) {
-    const ta = document.createElement("textarea");
-    ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px";
-    document.body.appendChild(ta); ta.select();
-    try { document.execCommand("copy"); } catch {}
-    ta.remove();
-  }
-  term.parser.registerOscHandler(52, (data) => {
-    const semi = data.indexOf(";");
-    if (semi < 0) return true;
-    const payload = data.slice(semi + 1);
-    if (!payload || payload === "?") return true; // read request: not wired
-    try {
-      const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
-      copyToClipboard(new TextDecoder("utf-8").decode(bytes));
-    } catch {}
-    return true;
-  });
+  // OSC 52 (program→clipboard both ways) is handled by the ClipboardAddon
+  // above. Below is the user-driven selection copy/paste.
 
   // Right-click: copy the current selection (if any), otherwise paste.
   async function pasteClipboard() {
@@ -146,10 +124,25 @@ export function mountTerminal(root) {
       if (text && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "input", data: text }));
     } catch { /* read blocked in non-secure context */ }
   }
+  function copySelection() {
+    if (!term.hasSelection()) return;
+    const text = term.getSelection();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else { fallbackCopy(text); }
+    term.clearSelection();
+  }
+  function fallbackCopy(text) {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch {}
+    ta.remove();
+  }
   if (term.element) {
     term.element.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      if (term.hasSelection()) { copyToClipboard(term.getSelection()); term.clearSelection(); }
+      if (term.hasSelection()) { copySelection(); }
       else { pasteClipboard(); }
     });
   }
@@ -157,7 +150,7 @@ export function mountTerminal(root) {
     if (ev.type !== "keydown") return true;
     // Ctrl+Shift+C = copy selection; Ctrl+Shift+V / Shift+Insert = paste.
     if (ev.ctrlKey && ev.shiftKey && (ev.key === "C" || ev.code === "KeyC") && term.hasSelection()) {
-      ev.preventDefault(); copyToClipboard(term.getSelection()); return false;
+      ev.preventDefault(); copySelection(); return false;
     }
     const isPaste = (ev.ctrlKey && ev.shiftKey && (ev.key === "V" || ev.code === "KeyV")) || (ev.shiftKey && ev.key === "Insert");
     if (isPaste) { ev.preventDefault(); pasteClipboard(); return false; }
