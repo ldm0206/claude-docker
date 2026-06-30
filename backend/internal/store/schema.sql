@@ -60,3 +60,8 @@ CREATE TABLE IF NOT EXISTS login_events (
   at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_login_events_at ON login_events(at DESC);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
