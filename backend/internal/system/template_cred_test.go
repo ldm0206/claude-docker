@@ -33,7 +33,8 @@ func TestCopyTemplateCredentials_HappyPath(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(dstDir, ".credentials.json"))
 	if err != nil { t.Fatalf("target missing: %v", err) }
 	if string(b) != `{"token":"abc"}` { t.Fatalf("content = %q", string(b)) }
-	fi, _ := os.Stat(filepath.Join(dstDir, ".credentials.json"))
+	fi, err := os.Stat(filepath.Join(dstDir, ".credentials.json"))
+	if err != nil { t.Fatalf("target stat: %v", err) }
 	if fi.Mode().Perm() != 0o600 { t.Fatalf("perm = %o, want 0600", fi.Mode().Perm()) }
 }
 
