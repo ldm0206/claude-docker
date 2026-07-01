@@ -159,7 +159,7 @@ VIEWS.audit = viewAudit;
 // ---------------------------------------------------------------------------
 // View: Terminal
 // ---------------------------------------------------------------------------
-function viewTerminal(root) { mountTerminal(root); }
+function viewTerminal(root) { mountTerminal(root, { role: self?.role }); }
 
 // ---------------------------------------------------------------------------
 // View: Files (SFTP connection info + workspace note)

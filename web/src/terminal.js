@@ -9,10 +9,18 @@ import "@xterm/xterm/css/xterm.css";
 // spins up a fresh one. The server replies with {type:"session",id} on connect.
 // There is no session-switching UI — the per-user cap is 1, so exactly one
 // session exists at a time.
-export function mountTerminal(root) {
+// mountTerminal(root, opts): single-session terminal. On open it attaches the
+// user's one alive session (listed via /api/sessions); if none, the WS create
+// path spins up a fresh one. The server replies with {type:"session",id} on
+// connect. There is no session-switching UI — the per-user cap is 1, so exactly
+// one session exists at a time. opts.role hides the admin-only login hint.
+export function mountTerminal(root, opts = {}) {
+  const hint = opts.role === "admin"
+    ? `<div class="term-hint muted tiny">登录 claude 前先执行：<code>unset ALL_PROXY all_proxy HTTP_PROXY HTTPS_PROXY http_proxy https_proxy</code>（否则会报 protocol mismatch）</div>`
+    : "";
   root.innerHTML = `
     <div class="term-wrap">
-      <div class="term-hint muted tiny">登录 claude 前先执行：<code>unset ALL_PROXY all_proxy HTTP_PROXY HTTPS_PROXY http_proxy https_proxy</code>（否则会报 protocol mismatch）</div>
+      ${hint}
       <div class="term-body" id="termroot"></div>
     </div>
     <div class="row" style="margin-top:8px">
