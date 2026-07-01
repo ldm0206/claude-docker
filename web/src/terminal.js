@@ -46,6 +46,16 @@ export function mountTerminal(root, opts = {}) {
   term.open(document.getElementById("termroot"));
   fit.fit();
 
+  // Web fonts (JetBrains Mono) load asynchronously. The first fit.fit() above
+  // runs before the font is ready, so it measures the fallback metrics and
+  // locks in wrong cell sizes → cols drift and wrapping misaligns until the
+  // user resizes. Refit once fonts settle, with a short fallback in case the
+  // Font Loading API is unavailable or the page is already loaded.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => fit.fit()).catch(() => {});
+  }
+  setTimeout(() => fit.fit(), 120);
+
   let currentSID = null;
   let ws = null;
   let reconnectAttempts = 0;
@@ -87,12 +97,22 @@ export function mountTerminal(root, opts = {}) {
     if (ws) { ws.onclose = null; ws.close(); }
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/ws/terminal` + (sid ? `?session=${encodeURIComponent(sid)}` : ""));
+    // PTY bytes arrive as binary frames (server-side MessageBinary); JSON
+    // control messages (session/ping/pty-exit) stay text. Branch on type.
+    ws.binaryType = "arraybuffer";
     status("connecting…");
     ws.onopen = () => {
       reconnectAttempts = 0;
       ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     };
     ws.onmessage = (e) => {
+      // Binary frame → raw PTY bytes; write straight through (xterm.js handles
+      // UTF-8 decode across frames, so a CJK/box char split on a read boundary
+      // reassembles correctly instead of becoming U+FFFD).
+      if (e.data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(e.data));
+        return;
+      }
       const raw = e.data;
       try {
         const m = JSON.parse(raw);
@@ -100,8 +120,7 @@ export function mountTerminal(root, opts = {}) {
         if (m.type === "session" && m.id) { sessionConfirmed = true; currentSID = m.id; status("session " + m.id.slice(0, 8)); return; }
         if (m.type === "pty-exit") { status("session ended (exit " + (m.exitCode ?? "?") + ") — restarting"); scheduleReconnect(""); return; }
         return;
-      } catch { /* binary/terminal data */ }
-      term.write(raw);
+      } catch { /* unexpected non-JSON text */ }
     };
     ws.onclose = (ev) => {
       const reason = CLOSE_REASONS[ev.code] || `closed (${ev.code})`;
@@ -168,7 +187,14 @@ export function mountTerminal(root, opts = {}) {
     return true;
   });
 
-  window.addEventListener("resize", () => fit.fit());
+  // Debounce resize → fit.fit() so a window drag (which fires dozens of
+  // resize events) doesn't flood the PTY with TIOCSWINSZ calls and race
+  // Claude Code's redraw (which shows up as sideways line drift).
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => fit.fit(), 80);
+  });
   term.onResize(({ cols, rows }) => ws && ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: "resize", cols, rows })));
 
   document.getElementById("kill-sess").onclick = async () => {

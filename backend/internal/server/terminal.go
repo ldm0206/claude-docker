@@ -79,7 +79,13 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	unsubData := p.OnData(func(b []byte) {
-		_ = c.Write(ctx, websocket.MessageText, b)
+		// Binary frames: PTY output is raw bytes, not guaranteed-valid UTF-8
+		// per WS message boundary. A multi-byte sequence (CJK, box-drawing)
+		// split across two readLoop chunks would be mangled to U+FFFD by the
+		// text-frame UTF-8 check, corrupting cell widths and cascading into
+		// the "lines drift sideways" symptom. Binary frames carry raw bytes
+		// and let xterm.js do the UTF-8 decode across frame boundaries.
+		_ = c.Write(ctx, websocket.MessageBinary, b)
 	})
 	unsubExit := p.OnExit(func(code int) {
 		// Natural process exit: notify the client. We do NOT call
@@ -124,7 +130,11 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			_ = p.Write([]byte(msg.Data))
 			_ = s.db.TouchSession(effSID, time.Now().Unix())
 		case "resize":
-			_ = p.Resize(msg.Cols, msg.Rows)
+			// FitAddon can compute 0 cols/rows when the container is momentarily
+			// collapsed; feeding 0 to TIOCSWINSZ wedges the PTY's line wrapping.
+			if msg.Cols > 0 && msg.Rows > 0 {
+				_ = p.Resize(msg.Cols, msg.Rows)
+			}
 		}
 	}
 }
