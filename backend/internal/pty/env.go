@@ -12,13 +12,43 @@ import (
 const claudeBin = "/home/claude/.local/bin"
 const sharedClaudeBin = "/opt/claude/bin"
 
-func BuildClaudeEnv(cfg *config.Config) []string {
-	envMap := make(map[string]string, 32)
+// proxyEnvKeys are env var names that must NOT be inherited from the server's
+// own environment into a PTY. A leaked ALL_PROXY=socks5://... from the host
+// (docker run -e, compose environment, etc.) makes claude's Node socks layer
+// crash the OAuth handshake (protocol mismatch) or assert (ERR_ASSERTION).
+// Proxying is opt-in via the explicit cfg.*Proxy fields (read from dedicated
+// env in config.Load), never via os.Environ passthrough.
+var proxyEnvKeys = map[string]struct{}{
+	"ALL_PROXY":     {},
+	"all_proxy":     {},
+	"HTTP_PROXY":    {},
+	"http_proxy":    {},
+	"HTTPS_PROXY":   {},
+	"https_proxy":   {},
+	"NO_PROXY":      {},
+	"no_proxy":      {},
+}
+
+// inheritedEnv snapshots os.Environ() into a map, dropping any proxy var so a
+// host-side leak cannot reach the spawned shell. Proxy injection is the caller's
+// explicit job via cfg.
+func inheritedEnv() map[string]string {
+	m := make(map[string]string, 32)
 	for _, e := range os.Environ() {
-		if key, val, ok := strings.Cut(e, "="); ok {
-			envMap[key] = val
+		key, val, ok := strings.Cut(e, "=")
+		if !ok {
+			continue
 		}
+		if _, drop := proxyEnvKeys[key]; drop {
+			continue
+		}
+		m[key] = val
 	}
+	return m
+}
+
+func BuildClaudeEnv(cfg *config.Config) []string {
+	envMap := inheritedEnv()
 	set := func(k, v string) {
 		envMap[k] = v
 	}
@@ -69,12 +99,7 @@ func BuildClaudeEnv(cfg *config.Config) []string {
 }
 
 func BuildUserEnv(cfg *config.Config, username, claudeConfigDir string) []string {
-	envMap := make(map[string]string, 32)
-	for _, e := range os.Environ() {
-		if key, val, ok := strings.Cut(e, "="); ok {
-			envMap[key] = val
-		}
-	}
+	envMap := inheritedEnv()
 	set := func(k, v string) {
 		envMap[k] = v
 	}
