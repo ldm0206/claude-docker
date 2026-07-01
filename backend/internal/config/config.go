@@ -6,9 +6,6 @@ import (
 )
 
 type Config struct {
-	AnthropicAPIKey        string
-	AnthropicAuthToken     string
-	AnthropicBaseURL       string
 	HTTPProxy              string
 	HTTPSProxy             string
 	AllProxy               string
@@ -26,9 +23,6 @@ func Load(get func(string) (string, bool)) (*Config, error) {
 	c := &Config{APITimeoutMS: 600000, Port: 8080, NoProxy: "localhost,127.0.0.1"}
 	opt := func(k string) string { v, _ := get(k); return v }
 	c.SessionSecret = opt("SESSION_SECRET")
-	c.AnthropicAPIKey = opt("ANTHROPIC_API_KEY")
-	c.AnthropicAuthToken = opt("ANTHROPIC_AUTH_TOKEN")
-	c.AnthropicBaseURL = opt("ANTHROPIC_BASE_URL")
 	c.HTTPProxy = opt("HTTP_PROXY")
 	c.HTTPSProxy = opt("HTTPS_PROXY")
 	c.AllProxy = opt("ALL_PROXY")

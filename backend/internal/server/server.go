@@ -62,23 +62,15 @@ func New(cfg *config.Config, db *store.DB, provisioner system.AccountProvisioner
 }
 
 // buildUserEnvFactory returns an EnvFactory that resolves the per-user env
-// slice lazily at PTY spawn time. It first copies the template user's
-// .credentials.json into the user's ~/.claude dir (non-fatal on failure),
-// then builds the env. Returning a function (not a precomputed slice) lets a
-// re-login take effect on the next Create/Restart without restarting the
-// server.
-//
-// SECURITY: the template credential file is copied onto disk under the user's
-// own ~/.claude (0600, user-owned). It is never logged.
+// slice lazily at PTY spawn time. Returning a function (not a precomputed
+// slice) lets a re-login take effect on the next Create/Restart without
+// restarting the server.
 func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
 	return func(_ string, _ string) []string {
-		if err := system.CopyTemplateCredentials(s.resolveTemplateUser(), u.Username, u.UID); err != nil {
-			log.Printf("[server] warning: copy template credentials for %s: %v", u.Username, err)
-		}
 		if err := system.RestoreClaudeConfig(u.Username, u.UID); err != nil {
 			log.Printf("[server] warning: restore claude config for %s: %v", u.Username, err)
 		}
-		return pty.BuildUserEnv(s.cfg, u.Username, "/home/"+u.Username+"/.claude")
+		return pty.BuildUserEnv(s.cfg, s.resolveAnthropic(), u.Username, "/home/"+u.Username+"/.claude")
 	}
 }
 

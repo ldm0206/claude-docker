@@ -8,13 +8,13 @@ func envOf(m map[string]string) func(string) (string, bool) {
 
 func TestLoadValid(t *testing.T) {
 	c, err := Load(envOf(map[string]string{
-		"SESSION_SECRET":       "sssh",
-		"ANTHROPIC_AUTH_TOKEN": "tok",
+		"SESSION_SECRET": "sssh",
+		"HTTP_PROXY":     "http://p:7890",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.AnthropicAuthToken != "tok" {
+	if c.HTTPProxy != "http://p:7890" {
 		t.Fatalf("got %+v", c)
 	}
 	if c.APITimeoutMS != 600000 || c.Port != 8080 || c.NoProxy != "localhost,127.0.0.1" {
