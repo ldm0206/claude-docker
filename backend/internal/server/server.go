@@ -75,6 +75,9 @@ func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
 		if err := system.CopyTemplateCredentials(s.resolveTemplateUser(), u.Username, u.UID); err != nil {
 			log.Printf("[server] warning: copy template credentials for %s: %v", u.Username, err)
 		}
+		if err := system.RestoreClaudeConfig(u.Username, u.UID); err != nil {
+			log.Printf("[server] warning: restore claude config for %s: %v", u.Username, err)
+		}
 		return pty.BuildUserEnv(s.cfg, u.Username, "/home/"+u.Username+"/.claude")
 	}
 }
