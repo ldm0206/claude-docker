@@ -51,15 +51,11 @@ func inheritedEnv() map[string]string {
 	return m
 }
 
-// AnthropicCreds carries the three admin-managed Anthropic values that are
-// injected into a user terminal only when non-empty.
-type AnthropicCreds struct {
-	APIKey    string
-	BaseURL   string
-	AuthToken string
-}
-
-func BuildUserEnv(cfg *config.Config, creds AnthropicCreds, username, claudeConfigDir string) []string {
+// BuildUserEnv assembles the env slice for a regular user's terminal. The
+// admin-managed authToken (from DB settings) is injected as
+// ANTHROPIC_AUTH_TOKEN only when non-empty; the caller is responsible for
+// passing "" for admin accounts (admins use their own credentials).
+func BuildUserEnv(cfg *config.Config, authToken string, username, claudeConfigDir string) []string {
 	envMap := inheritedEnv()
 	set := func(k, v string) {
 		envMap[k] = v
@@ -74,14 +70,8 @@ func BuildUserEnv(cfg *config.Config, creds AnthropicCreds, username, claudeConf
 		set("COLORTERM", "truecolor")
 	}
 	set("CLAUDE_CONFIG_DIR", claudeConfigDir)
-	if creds.APIKey != "" {
-		set("ANTHROPIC_API_KEY", creds.APIKey)
-	}
-	if creds.BaseURL != "" {
-		set("ANTHROPIC_BASE_URL", creds.BaseURL)
-	}
-	if creds.AuthToken != "" {
-		set("ANTHROPIC_AUTH_TOKEN", creds.AuthToken)
+	if authToken != "" {
+		set("ANTHROPIC_AUTH_TOKEN", authToken)
 	}
 	for _, p := range []struct{ hi, lo, val string }{
 		{"HTTP_PROXY", "http_proxy", cfg.HTTPProxy},

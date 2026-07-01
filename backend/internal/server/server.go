@@ -70,7 +70,13 @@ func (s *Server) buildUserEnvFactory(u store.User) sessions.EnvFactory {
 		if err := system.RestoreClaudeConfig(u.Username, u.UID); err != nil {
 			log.Printf("[server] warning: restore claude config for %s: %v", u.Username, err)
 		}
-		return pty.BuildUserEnv(s.cfg, s.resolveAnthropic(), u.Username, "/home/"+u.Username+"/.claude")
+		// Admins use their own credentials; the shared auth token is injected
+		// only into non-admin users' terminals.
+		var token string
+		if u.Role != "admin" {
+			token = s.resolveAuthToken()
+		}
+		return pty.BuildUserEnv(s.cfg, token, u.Username, "/home/"+u.Username+"/.claude")
 	}
 }
 
@@ -224,8 +230,8 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
 			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
-			r.Get("/api/admin/settings/anthropic", s.handleAdminGetAnthropic)
-			r.Put("/api/admin/settings/anthropic", s.handleAdminSetAnthropic)
+			r.Get("/api/admin/settings/auth-token", s.handleAdminGetAuthToken)
+			r.Put("/api/admin/settings/auth-token", s.handleAdminSetAuthToken)
 		})
 	})
 	r.Handle("/*", ui.SPA())

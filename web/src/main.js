@@ -199,18 +199,12 @@ async function refreshTraffic(root) {
 async function viewAdminUsers(root) {
   root.innerHTML = `<div class="card pads" style="margin-bottom:12px">
       <div class="row">
-        <div style="flex:1"><div class="lbl">Anthropic API key</div>
-          <input class="field" id="anth-api-key" placeholder="sk-..." autocomplete="off"></div>
-        <div style="flex:1"><div class="lbl">Base URL</div>
-          <input class="field" id="anth-base-url" placeholder="https://api.anthropic.com" autocomplete="off"></div>
-        <div style="flex:1"><div class="lbl">Auth token</div>
-          <input class="field" id="anth-auth-token" type="password" autocomplete="off"></div>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <span class="muted tiny">Injected into every user's terminal as environment variables. Leave a field empty to skip that variable.</span>
+        <div style="flex:1"><div class="lbl">Anthropic auth token</div>
+          <input class="field" id="anth-auth-token" type="password" placeholder="sk-ant-oat01-..." autocomplete="off"></div>
         <span class="grow"></span>
         <button class="btn" id="anth-save">Save</button>
       </div>
+      <p class="muted tiny" style="margin:8px 0 0">Injected as <code>ANTHROPIC_AUTH_TOKEN</code> into every non-admin user's terminal. Leave empty to not inject.</p>
     </div>
     <div class="row"><span class="grow"></span><button class="btn" id="add-user">+ New user</button></div>
     <div class="card" style="margin-top:12px;overflow:auto"><table class="tbl"><thead><tr>
@@ -222,28 +216,20 @@ async function viewAdminUsers(root) {
 }
 
 async function loadAnthropic() {
-  const apiKey = document.getElementById("anth-api-key");
-  const baseURL = document.getElementById("anth-base-url");
   const authToken = document.getElementById("anth-auth-token");
   const save = document.getElementById("anth-save");
-  if (!apiKey) return;
+  if (!authToken) return;
   try {
-    const cur = await getJson("/api/admin/settings/anthropic");
-    apiKey.value = cur.api_key || "";
-    baseURL.value = cur.base_url || "";
+    const cur = await getJson("/api/admin/settings/auth-token");
     authToken.value = cur.auth_token || "";
   } catch {
-    // leave fields blank on load error
+    // leave field blank on load error
   }
   save.onclick = async () => {
     try {
-      const r = await fetch("/api/admin/settings/anthropic", {
+      const r = await fetch("/api/admin/settings/auth-token", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          api_key: apiKey.value,
-          base_url: baseURL.value,
-          auth_token: authToken.value,
-        }),
+        body: JSON.stringify({ auth_token: authToken.value }),
       });
       if (!r.ok) alert("Save failed (" + r.status + ")");
     } catch {

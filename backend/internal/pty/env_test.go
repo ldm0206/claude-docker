@@ -9,7 +9,7 @@ import (
 	"github.com/ldm0206/claude-docker/backend/internal/config"
 )
 
-func TestBuildUserEnv_InjectsAllCreds(t *testing.T) {
+func TestBuildUserEnv_InjectsAuthToken(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
 	t.Setenv("HOME", "/tmp/wrong")
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/inherited")
@@ -19,19 +19,12 @@ func TestBuildUserEnv_InjectsAllCreds(t *testing.T) {
 		NoProxy:      "localhost,127.0.0.1",
 		APITimeoutMS: 300000,
 	}
-	creds := AnthropicCreds{
-		APIKey:    "sk-abc",
-		BaseURL:   "http://gw",
-		AuthToken: "tok",
-	}
-	env := BuildUserEnv(cfg, creds, "alice", "/data/alice/claude-config")
+	env := BuildUserEnv(cfg, "tok", "alice", "/data/alice/claude-config")
 	j := strings.Join(env, "\n")
 
 	for _, want := range []string{
 		"HOME=/home/alice",
 		"CLAUDE_CONFIG_DIR=/data/alice/claude-config",
-		"ANTHROPIC_API_KEY=sk-abc",
-		"ANTHROPIC_BASE_URL=http://gw",
 		"ANTHROPIC_AUTH_TOKEN=tok",
 		"HTTP_PROXY=http://p:7890",
 		"http_proxy=http://p:7890",
@@ -43,31 +36,23 @@ func TestBuildUserEnv_InjectsAllCreds(t *testing.T) {
 	}
 }
 
-func TestBuildUserEnv_EmptyCredsNotInjected(t *testing.T) {
+func TestBuildUserEnv_EmptyTokenNotInjected(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
 	t.Setenv("HOME", "/tmp/wrong")
-	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"} {
-		v, ok := os.LookupEnv(k)
-		if ok {
-			t.Cleanup(func() { os.Setenv(k, v) })
-		} else {
-			t.Cleanup(func() { os.Unsetenv(k) })
-		}
-		os.Unsetenv(k)
+	v, ok := os.LookupEnv("ANTHROPIC_AUTH_TOKEN")
+	if ok {
+		t.Cleanup(func() { os.Setenv("ANTHROPIC_AUTH_TOKEN", v) })
+	} else {
+		t.Cleanup(func() { os.Unsetenv("ANTHROPIC_AUTH_TOKEN") })
 	}
+	os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
 
 	cfg := &config.Config{APITimeoutMS: 300000}
-	env := BuildUserEnv(cfg, AnthropicCreds{}, "alice", "/data/alice/claude-config")
+	env := BuildUserEnv(cfg, "", "alice", "/data/alice/claude-config")
 	j := strings.Join(env, "\n")
 
-	for _, absent := range []string{
-		"ANTHROPIC_API_KEY=",
-		"ANTHROPIC_BASE_URL=",
-		"ANTHROPIC_AUTH_TOKEN=",
-	} {
-		if strings.Contains(j, absent) {
-			t.Fatalf("empty cred must not be injected, found %q\n%s", absent, j)
-		}
+	if strings.Contains(j, "ANTHROPIC_AUTH_TOKEN=") {
+		t.Fatalf("empty token must not be injected\n%s", j)
 	}
 
 	expectedPathPrefix := "/opt/claude/bin:/usr/bin:/bin"
@@ -79,7 +64,7 @@ func TestBuildUserEnv_EmptyCredsNotInjected(t *testing.T) {
 func TestBuildUserEnv_ParameterizedConfigDir(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/inherited")
 	cfg := &config.Config{APITimeoutMS: 1}
-	env := BuildUserEnv(cfg, AnthropicCreds{}, "alice", "/data/alice/claude-config")
+	env := BuildUserEnv(cfg, "", "alice", "/data/alice/claude-config")
 	j := strings.Join(env, "\n")
 	if strings.Contains(j, "CLAUDE_CONFIG_DIR=/tmp/inherited") {
 		t.Fatalf("CLAUDE_CONFIG_DIR must use parameterized dir, not inherited\n%s", j)
@@ -89,12 +74,11 @@ func TestBuildUserEnv_ParameterizedConfigDir(t *testing.T) {
 	}
 }
 
-// ensure HOME is parameterized and PATH prepends /opt/claude/bin
 func TestBuildUserEnv_HomeAndPath(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
 	origPath := os.Getenv("PATH")
 	cfg := &config.Config{APITimeoutMS: 1}
-	env := BuildUserEnv(cfg, AnthropicCreds{}, "alice", "/x")
+	env := BuildUserEnv(cfg, "", "alice", "/x")
 	j := strings.Join(env, "\n")
 	if strings.Contains(j, "HOME=/home/claude") {
 		t.Fatalf("HOME must be /home/alice, not /home/claude\n%s", j)
@@ -110,7 +94,7 @@ func TestBuildUserEnv_HostProxyNotInherited(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://leak:8080")
 	t.Setenv("https_proxy", "http://leak:8443")
 	cfg := &config.Config{APITimeoutMS: 1}
-	env := BuildUserEnv(cfg, AnthropicCreds{}, "alice", "/x")
+	env := BuildUserEnv(cfg, "", "alice", "/x")
 	j := strings.Join(env, "\n")
 	for _, leak := range []string{"socks5://leak", "http://leak:8080", "http://leak:8443"} {
 		if strings.Contains(j, leak) {
@@ -125,7 +109,7 @@ func TestBuildUserEnv_HostAnthropicNotInherited(t *testing.T) {
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok-host-leak")
 	t.Setenv("ANTHROPIC_BASE_URL", "http://host-leak")
 	cfg := &config.Config{APITimeoutMS: 1}
-	env := BuildUserEnv(cfg, AnthropicCreds{}, "alice", "/x")
+	env := BuildUserEnv(cfg, "", "alice", "/x")
 	j := strings.Join(env, "\n")
 	for _, leak := range []string{"sk-host-leak", "tok-host-leak", "http://host-leak"} {
 		if strings.Contains(j, leak) {
