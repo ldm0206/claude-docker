@@ -16,7 +16,9 @@ const sharedClaudeBin = "/opt/claude/bin"
 // (docker run -e, compose environment, etc.) makes claude's Node socks layer
 // crash the OAuth handshake (protocol mismatch) or assert (ERR_ASSERTION).
 // Proxying is opt-in via the explicit cfg.*Proxy fields (read from dedicated
-// env in config.Load), never via os.Environ passthrough.
+// env in config.Load), never via os.Environ passthrough. The ANTHROPIC_* vars
+// are also dropped so a host-side credential never bypasses the admin DB
+// setting (empty admin value = do not inject that variable).
 var proxyEnvKeys = map[string]struct{}{
 	"ALL_PROXY":   {},
 	"all_proxy":   {},
@@ -26,6 +28,9 @@ var proxyEnvKeys = map[string]struct{}{
 	"https_proxy": {},
 	"NO_PROXY":    {},
 	"no_proxy":    {},
+	"ANTHROPIC_API_KEY":   {},
+	"ANTHROPIC_BASE_URL":  {},
+	"ANTHROPIC_AUTH_TOKEN": {},
 }
 
 // inheritedEnv snapshots os.Environ() into a map, dropping any proxy var so a

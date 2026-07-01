@@ -118,3 +118,18 @@ func TestBuildUserEnv_HostProxyNotInherited(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildUserEnv_HostAnthropicNotInherited(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-host-leak")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok-host-leak")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://host-leak")
+	cfg := &config.Config{APITimeoutMS: 1}
+	env := BuildUserEnv(cfg, AnthropicCreds{}, "alice", "/x")
+	j := strings.Join(env, "\n")
+	for _, leak := range []string{"sk-host-leak", "tok-host-leak", "http://host-leak"} {
+		if strings.Contains(j, leak) {
+			t.Fatalf("host ANTHROPIC var leaked into env: %q\n%s", leak, j)
+		}
+	}
+}
