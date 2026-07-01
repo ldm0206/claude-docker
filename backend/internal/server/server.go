@@ -224,8 +224,6 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
 			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
-			r.Get("/api/admin/settings/template-user", s.handleAdminGetTemplateUser)
-			r.Put("/api/admin/settings/template-user", s.handleAdminSetTemplateUser)
 		})
 	})
 	r.Handle("/*", ui.SPA())
