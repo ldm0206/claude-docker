@@ -224,6 +224,8 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/api/admin/users/{id}/sessions", s.handleAdminListSessions)
 			r.Delete("/api/admin/users/{id}/sessions/{sid}", s.handleAdminKillSession)
 			r.Delete("/api/admin/users/{id}/sessions", s.handleAdminKillAllSessions)
+			r.Get("/api/admin/settings/anthropic", s.handleAdminGetAnthropic)
+			r.Put("/api/admin/settings/anthropic", s.handleAdminSetAnthropic)
 		})
 	})
 	r.Handle("/*", ui.SPA())
