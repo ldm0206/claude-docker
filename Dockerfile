@@ -18,7 +18,24 @@ COPY backend/ ./
 COPY --from=web-builder /web/dist ./internal/ui/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/claude-docker ./cmd/server
 
-# Stage 3: runtime (runs as root — the server setuids into per-user accounts)
+# Stage 3: download claude binary into an isolated stage.
+# BuildKit `no-cache-filters` targets this stage by name (see the GHA workflow)
+# so every build re-fetches https://downloads.claude.ai/claude-code-releases/latest
+# and pulls the newest claude, while web/go/apt layers still use the GHA cache.
+FROM debian:bookworm-slim AS claude-fetcher
+RUN apt-get update && apt-get install -y --no-install-recommends curl jq ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN install -d -m 0755 /opt/claude/bin \
+    && set -e; \
+    LATEST=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest); \
+    MANIFEST=$(curl -fsSL "https://downloads.claude.ai/claude-code-releases/$LATEST/manifest.json"); \
+    CHECKSUM=$(echo "$MANIFEST" | jq -r '.platforms["linux-x64"].checksum'); \
+    curl -fsSL -o /tmp/claude-bin "https://downloads.claude.ai/claude-code-releases/$LATEST/linux-x64/claude"; \
+    echo "$CHECKSUM  /tmp/claude-bin" | sha256sum -c; \
+    chmod 0755 /tmp/claude-bin; \
+    mv /tmp/claude-bin /opt/claude/bin/claude
+
+# Stage 4: runtime (runs as root — the server setuids into per-user accounts)
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     DISABLE_AUTOUPDATER=1 \
@@ -34,16 +51,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Download claude binary to a shared, root-owned path used by ALL users.
-RUN install -d -m 0755 /opt/claude/bin \
-    && set -e; \
-    LATEST=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest); \
-    MANIFEST=$(curl -fsSL "https://downloads.claude.ai/claude-code-releases/$LATEST/manifest.json"); \
-    CHECKSUM=$(echo "$MANIFEST" | jq -r '.platforms["linux-x64"].checksum'); \
-    curl -fsSL -o /tmp/claude-bin "https://downloads.claude.ai/claude-code-releases/$LATEST/linux-x64/claude"; \
-    echo "$CHECKSUM  /tmp/claude-bin" | sha256sum -c; \
-    chmod 0755 /tmp/claude-bin; \
-    mv /tmp/claude-bin /opt/claude/bin/claude
+# claude binary from the fetcher stage (rebuilt every build).
+COPY --from=claude-fetcher /opt/claude/bin/claude /opt/claude/bin/claude
 
 WORKDIR /workspace
 COPY --from=go-builder /out/claude-docker /app/claude-docker

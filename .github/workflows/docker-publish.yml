@@ -51,5 +51,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Force the claude-fetcher stage to ignore the GHA cache on every
+          # build, so the newest claude release is always pulled. Other stages
+          # (web build, go build, apt install) still reuse cached layers.
+          no-cache-filters: claude-fetcher
           cache-from: type=gha
           cache-to: type=gha,mode=max
