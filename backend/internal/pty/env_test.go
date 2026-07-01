@@ -47,7 +47,6 @@ func TestBuildUserEnv_EmptyCredsNotInjected(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
 	t.Setenv("HOME", "/tmp/wrong")
 	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"} {
-		k := k
 		v, ok := os.LookupEnv(k)
 		if ok {
 			t.Cleanup(func() { os.Setenv(k, v) })
