@@ -29,16 +29,9 @@ func Load(get func(string) (string, bool)) (*Config, error) {
 	c.AnthropicAPIKey = opt("ANTHROPIC_API_KEY")
 	c.AnthropicAuthToken = opt("ANTHROPIC_AUTH_TOKEN")
 	c.AnthropicBaseURL = opt("ANTHROPIC_BASE_URL")
-	// Proxy is opt-in via dedicated CLAUDE_*_PROXY env names only. The generic
-	// HTTP_PROXY / HTTPS_PROXY / ALL_PROXY names are intentionally NOT read
-	// here: those are exactly what leaks from the host (docker run -e, compose
-	// env_file) into the server's own env, and re-injecting them into the PTY
-	// would defeat the os.Environ strip in pty.inheritedEnv — crashing claude's
-	// Node socks layer on a fresh OAuth handshake (ERR_ASSERTION). Operators
-	// who want an outbound proxy set the CLAUDE_* names on purpose.
-	c.HTTPProxy = opt("CLAUDE_HTTP_PROXY")
-	c.HTTPSProxy = opt("CLAUDE_HTTPS_PROXY")
-	c.AllProxy = opt("CLAUDE_ALL_PROXY")
+	c.HTTPProxy = opt("HTTP_PROXY")
+	c.HTTPSProxy = opt("HTTPS_PROXY")
+	c.AllProxy = opt("ALL_PROXY")
 	c.BootstrapAdminUser = opt("BOOTSTRAP_ADMIN_USER")
 	c.BootstrapAdminPassword = opt("BOOTSTRAP_ADMIN_PASSWORD")
 	c.CookieSameSite = opt("COOKIE_SAMESITE")
@@ -46,7 +39,7 @@ func Load(get func(string) (string, bool)) (*Config, error) {
 	if c.CookieSameSite == "" {
 		c.CookieSameSite = "none"
 	}
-	if v, ok := get("CLAUDE_NO_PROXY"); ok {
+	if v, ok := get("NO_PROXY"); ok {
 		c.NoProxy = v
 	}
 	if v, ok := get("API_TIMEOUT_MS"); ok {
