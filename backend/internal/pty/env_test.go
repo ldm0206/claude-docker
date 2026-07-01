@@ -103,3 +103,18 @@ func TestBuildUserEnv_HomeAndPath(t *testing.T) {
 		t.Fatalf("PATH must prepend /opt/claude/bin before inherited PATH\n%s", j)
 	}
 }
+
+func TestBuildUserEnv_HostProxyNotInherited(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("ALL_PROXY", "socks5://leak:1080")
+	t.Setenv("HTTP_PROXY", "http://leak:8080")
+	t.Setenv("https_proxy", "http://leak:8443")
+	cfg := &config.Config{APITimeoutMS: 1}
+	env := BuildUserEnv(cfg, AnthropicCreds{}, "alice", "/x")
+	j := strings.Join(env, "\n")
+	for _, leak := range []string{"socks5://leak", "http://leak:8080", "http://leak:8443"} {
+		if strings.Contains(j, leak) {
+			t.Fatalf("host proxy leaked into env: %q\n%s", leak, j)
+		}
+	}
+}
