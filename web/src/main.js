@@ -199,12 +199,18 @@ async function refreshTraffic(root) {
 async function viewAdminUsers(root) {
   root.innerHTML = `<div class="card pads" style="margin-bottom:12px">
       <div class="row">
-        <div><div class="lbl">Template user</div>
-        <select class="field" id="tpl-user" style="width:auto"></select></div>
-        <span class="grow"></span>
-        <span class="muted tiny" id="tpl-note"></span>
+        <div style="flex:1"><div class="lbl">Anthropic API key</div>
+          <input class="field" id="anth-api-key" placeholder="sk-..." autocomplete="off"></div>
+        <div style="flex:1"><div class="lbl">Base URL</div>
+          <input class="field" id="anth-base-url" placeholder="https://api.anthropic.com" autocomplete="off"></div>
+        <div style="flex:1"><div class="lbl">Auth token</div>
+          <input class="field" id="anth-auth-token" type="password" autocomplete="off"></div>
       </div>
-      <p class="muted tiny" style="margin:8px 0 0">The template user's <code>.credentials.json</code> is copied into every user's terminal at session start. Must be an admin. Overrides CLAUDE_TEMPLATE_USER.</p>
+      <div class="row" style="margin-top:8px">
+        <span class="muted tiny">Injected into every user's terminal as environment variables. Leave a field empty to skip that variable.</span>
+        <span class="grow"></span>
+        <button class="btn" id="anth-save">Save</button>
+      </div>
     </div>
     <div class="row"><span class="grow"></span><button class="btn" id="add-user">+ New user</button></div>
     <div class="card" style="margin-top:12px;overflow:auto"><table class="tbl"><thead><tr>
@@ -212,35 +218,37 @@ async function viewAdminUsers(root) {
     </tr></thead><tbody id="utbody"></tbody></table></div>`;
   document.getElementById("add-user").onclick = () => userModal(null, () => viewAdminUsers(root));
   await refreshUsers();
-  await loadTemplateUser();
+  await loadAnthropic();
 }
 
-async function loadTemplateUser() {
-  const sel = document.getElementById("tpl-user");
-  if (!sel) return;
-  let admins = [];
-  try { admins = (await getJson("/api/admin/users")).filter(u => u.role === "admin"); } catch {}
-  // "(env / disabled)" option — empty value.
-  sel.innerHTML = `<option value="">(env / disabled)</option>` +
-    admins.map(a => `<option value="${esc(a.username)}">${esc(a.username)}</option>`).join("");
+async function loadAnthropic() {
+  const apiKey = document.getElementById("anth-api-key");
+  const baseURL = document.getElementById("anth-base-url");
+  const authToken = document.getElementById("anth-auth-token");
+  const save = document.getElementById("anth-save");
+  if (!apiKey) return;
   try {
-    const cur = await getJson("/api/admin/settings/template-user");
-    sel.value = cur.template_user || "";
-    document.getElementById("tpl-note").textContent = cur.template_user ? "" : "(using CLAUDE_TEMPLATE_USER if set)";
+    const cur = await getJson("/api/admin/settings/anthropic");
+    apiKey.value = cur.api_key || "";
+    baseURL.value = cur.base_url || "";
+    authToken.value = cur.auth_token || "";
   } catch {
-    document.getElementById("tpl-note").textContent = "";
+    // leave fields blank on load error
   }
-  sel.onchange = async () => {
+  save.onclick = async () => {
     try {
-      const r = await fetch("/api/admin/settings/template-user", {
+      const r = await fetch("/api/admin/settings/anthropic", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_user: sel.value }),
+        body: JSON.stringify({
+          api_key: apiKey.value,
+          base_url: baseURL.value,
+          auth_token: authToken.value,
+        }),
       });
       if (!r.ok) alert("Save failed (" + r.status + ")");
     } catch {
       alert("Save failed (network)");
     }
-    await loadTemplateUser();
   };
 }
 
